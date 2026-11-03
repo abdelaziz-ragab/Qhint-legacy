@@ -3,12 +3,54 @@ import { join } from 'node:path';
 import { OVERLAY_SCENE_CHANNEL, type OverlayScene } from '../../shared/overlay-scene';
 import { localWorkArea, type DisplayGeometry } from '../coords/coords';
 import { currentDisplays } from '../capture/capture';
+import { correctedFrame } from './fit';
+
+/** The page's own view of where it is drawn, in global DIP. */
+async function measureDrawingArea(win: BrowserWindow): Promise<Electron.Rectangle | null> {
+  if (win.isDestroyed()) return null;
+  try {
+    const [x, y, width, height] = (await win.webContents.executeJavaScript(
+      '[window.screenX, window.screenY, window.innerWidth, window.innerHeight]',
+    )) as number[];
+    return { x: x!, y: y!, width: width!, height: height! };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Make the page's drawing area match the display exactly. The OS can add or shift a few points
+ * (macOS panel windows on a display with a menu bar notch came out 32pt taller and higher), so
+ * measure from inside the page and correct the outer frame by the difference.
+ */
+async function fitToDisplay(win: BrowserWindow, bounds: Electron.Rectangle): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const actual = await measureDrawingArea(win);
+    if (!actual) return false;
+    if (sameRect(actual, bounds)) return true;
+    if (win.isDestroyed()) return false;
+    win.setBounds(correctedFrame(win.getBounds(), bounds, actual));
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const actual = await measureDrawingArea(win);
+  return actual !== null && sameRect(actual, bounds);
+}
+
+function emptyScene(display: DisplayGeometry): OverlayScene {
+  return { rings: [], workArea: localWorkArea(display), origin: display.bounds };
+}
+
+export function sameRect(a: Electron.Rectangle, b: Electron.Rectangle): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
 
 interface OverlayEntry {
   display: DisplayGeometry;
   win: BrowserWindow;
   ready: boolean;
   pending?: OverlayScene;
+  /** Serialises fit + draw so scenes arrive in order. */
+  queue: Promise<void>;
 }
 
 /**
@@ -47,29 +89,52 @@ export class OverlayManager {
     return this.entries.get(displayId)?.display;
   }
 
-  /** Expected vs actual window bounds per display (for the debug report). */
-  diagnostics(): { displayId: number; expected: Electron.Rectangle; actual: Electron.Rectangle }[] {
-    return [...this.entries.values()]
-      .filter((e) => !e.win.isDestroyed())
-      .map((e) => ({
+  /**
+   * Expected vs actual drawing area per display (for the debug report). Measured from inside the
+   * page: on macOS, getBounds/getContentBounds of a panel window include an invisible title strip
+   * that the page never draws into.
+   */
+  async diagnostics(): Promise<
+    { displayId: number; expected: Electron.Rectangle; actual: Electron.Rectangle | null }[]
+  > {
+    const live = [...this.entries.values()].filter((e) => !e.win.isDestroyed());
+    return Promise.all(
+      live.map(async (e) => ({
         displayId: e.display.id,
         expected: e.display.bounds,
-        actual: e.win.getContentBounds(),
-      }));
+        actual: await measureDrawingArea(e.win),
+      })),
+    );
   }
 
-  render(displayId: number, scene: OverlayScene): boolean {
+  /**
+   * Draw a scene on one display. Re-fits the window to the display first: macOS can move a panel
+   * window after it was placed (seen as a 32pt shift on a display with a notch). Resolves once
+   * the scene has been sent.
+   */
+  render(displayId: number, scene: OverlayScene): Promise<boolean> {
     const entry = this.entries.get(displayId);
-    if (!entry || entry.win.isDestroyed()) return false;
-    if (entry.ready) entry.win.webContents.send(OVERLAY_SCENE_CHANNEL, scene);
-    else entry.pending = scene;
-    return true;
+    if (!entry || entry.win.isDestroyed()) return Promise.resolve(false);
+    if (!entry.ready) {
+      entry.pending = scene;
+      return Promise.resolve(true);
+    }
+    const { win, display } = entry;
+    const done = entry.queue.then(async () => {
+      if (!(await fitToDisplay(win, display.bounds))) {
+        console.warn(`overlay drawing area could not be fitted on display ${display.id}`);
+      }
+      if (!win.isDestroyed()) win.webContents.send(OVERLAY_SCENE_CHANNEL, scene);
+    });
+    entry.queue = done.catch(() => {});
+    return done.then(
+      () => true,
+      () => false,
+    );
   }
 
-  clearAll(): void {
-    for (const [id, e] of this.entries) {
-      this.render(id, { rings: [], workArea: localWorkArea(e.display) });
-    }
+  async clearAll(): Promise<void> {
+    await Promise.all([...this.entries].map(([id, e]) => this.render(id, emptyScene(e.display))));
   }
 
   /** Recreate overlay windows to match the current display layout (clears drawings). */
@@ -112,34 +177,26 @@ export class OverlayManager {
     win.setContentProtection(true);
     win.setIgnoreMouseEvents(true, { forward: true });
     win.setAlwaysOnTop(true, 'screen-saver');
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // skipTransformProcessType keeps the Dock icon; the panel window type is what lets the overlay
+    // float over full-screen apps.
+    win.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
 
-    const entry: OverlayEntry = { display, win, ready: false };
+    const entry: OverlayEntry = { display, win, ready: false, queue: Promise.resolve() };
 
     win.webContents.once('did-finish-load', () => {
       // Re-apply bounds once the window exists on its display: on Windows with mixed DPI a
       // window created on another monitor can come out scaled.
       win.setBounds(bounds);
-      // Compare the drawing area: on macOS the outer frame can include an invisible title strip.
-      const actual = win.getContentBounds();
-      if (
-        actual.x !== bounds.x ||
-        actual.y !== bounds.y ||
-        actual.width !== bounds.width ||
-        actual.height !== bounds.height
-      ) {
-        console.warn(
-          `overlay bounds mismatch on display ${display.id}: ` +
-            `expected ${JSON.stringify(bounds)} got ${JSON.stringify(actual)}`,
-        );
-      }
       win.showInactive();
-      entry.ready = true;
-      win.webContents.send(
-        OVERLAY_SCENE_CHANNEL,
-        entry.pending ?? { rings: [], workArea: localWorkArea(display) },
-      );
-      entry.pending = undefined;
+      void fitToDisplay(win, bounds).then((ok) => {
+        if (!ok) console.warn(`overlay drawing area could not be fitted on display ${display.id}`);
+        entry.ready = true;
+        win.webContents.send(OVERLAY_SCENE_CHANNEL, entry.pending ?? emptyScene(display));
+        entry.pending = undefined;
+      });
     });
     win.webContents.on('render-process-gone', (_e, d) =>
       console.error(`overlay renderer gone: ${d.reason}`),

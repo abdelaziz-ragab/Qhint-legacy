@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
+import { appIcon } from './icons';
 
 /** The small Qhint panel (Ask / Library / Create later). Hidden instead of closed. */
 export class MainWindow {
@@ -35,6 +36,8 @@ export class MainWindow {
       height: 600,
       show: false,
       title: 'Qhint',
+      // Windows taskbar / window icon (macOS uses the Dock icon).
+      ...(process.platform === 'darwin' ? {} : { icon: appIcon() }),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         sandbox: true,

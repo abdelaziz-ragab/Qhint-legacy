@@ -52,15 +52,17 @@ export function App() {
         Hotkey: {info?.hotkey ?? 'unavailable'}
         {info?.hotkeyIsFallback ? ' (fallback; default was taken)' : ''}
       </p>
-      <div style={styles.row}>
-        <button style={styles.button} disabled={busy} onClick={() => void runDebug()}>
-          {busy ? 'Capturing…' : 'Debug: capture + draw rings'}
-        </button>
-        <button style={styles.button} onClick={() => void window.qhint.clearOverlay()}>
-          Clear overlay
-        </button>
-      </div>
-      {summary ? <pre style={styles.pre}>{summary}</pre> : null}
+      {info?.debugTools ? (
+        <div style={styles.row}>
+          <button style={styles.button} disabled={busy} onClick={() => void runDebug()}>
+            {busy ? 'Capturing…' : 'Debug: capture + draw rings'}
+          </button>
+          <button style={styles.button} onClick={() => void window.qhint.clearOverlay()}>
+            Clear overlay
+          </button>
+        </div>
+      ) : null}
+      {info?.debugTools && summary ? <pre style={styles.pre}>{summary}</pre> : null}
       <p style={styles.muted}>
         {platform} · Electron {versions.electron} · Chrome {versions.chrome}
       </p>

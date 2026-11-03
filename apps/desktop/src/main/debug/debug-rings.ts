@@ -10,7 +10,7 @@ import { captureDisplays, type DisplayCapture } from '../capture/capture';
 import { HIDE_DURING_CAPTURE, withOwnWindowsHidden } from '../capture/guard';
 import { LEAK_SCORE_LIMIT, ringLeakScore } from '../capture/leak-check';
 import { imageBBoxToLocal, localWorkArea } from '../coords/coords';
-import type { OverlayManager } from '../overlay/manager';
+import { sameRect, type OverlayManager } from '../overlay/manager';
 import { ensureScreenPermission } from '../permissions';
 
 export const RING_BORDER = 3; // keep in sync with overlay.css
@@ -24,7 +24,7 @@ export interface DebugBox {
   tone: NonNullable<OverlayRing['tone']>;
 }
 
-/** Boxes in image pixels: full image (traces the display edges), centre half, small corner box. */
+/** Boxes in image pixels: whole image (traces its edges), centre half, small corner box. */
 export function debugBoxes(width: number, height: number): DebugBox[] {
   const cx = Math.round(width * 0.05);
   const cy = Math.round(height * 0.08);
@@ -42,15 +42,18 @@ export function debugBoxes(width: number, height: number): DebugBox[] {
 
 /** Where the ring stroke runs, in image pixels (for the leak check). */
 function strokeRectInImage(box: DebugBox, c: DisplayCapture): Rect {
-  const k = c.image.width / c.display.bounds.width; // image px per DIP
+  const k = c.image.width / c.region.width; // image px per DIP
   return inflate(bboxToRect(box.bbox), (box.pad + RING_BORDER / 2) * k);
 }
 
-export interface DisplayDebugResult {
+export interface ImageDebugResult {
   label: string;
   displayId: number;
+  tile: DisplayCapture['tile'];
   scaleFactor: number;
   bounds: Rect;
+  /** Local DIP region of the display covered by this image. */
+  region: Rect;
   image: { width: number; height: number };
   matchMethod: DisplayCapture['matchMethod'];
   boxes: (DebugBox & { local: Rect })[];
@@ -64,9 +67,9 @@ export interface DebugRun {
   startedAt: number;
   platform: NodeJS.Platform;
   hideDuringCapture: boolean;
-  displays: DisplayDebugResult[];
+  images: ImageDebugResult[];
   skippedDisplayIds: number[];
-  overlayBounds: ReturnType<OverlayManager['diagnostics']>;
+  overlayBounds: Awaited<ReturnType<OverlayManager['diagnostics']>>;
   captures: {
     before: DisplayCapture[];
     afterRaw: DisplayCapture[];
@@ -76,21 +79,11 @@ export interface DebugRun {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function sceneFor(c: DisplayCapture, boxes: DebugBox[], locals: Rect[]): OverlayScene {
-  const { display } = c;
-  const pct = Math.round(display.scaleFactor * 100);
-  return {
-    rings: boxes.map((b, i) => ({ rect: locals[i]!, pad: b.pad, tone: b.tone })),
-    card: {
-      anchor: locals[1]!,
-      title: `${c.label} · display ${display.id} · ${pct}%`,
-      body:
-        `image ${c.image.width}×${c.image.height} px → ` +
-        `${display.bounds.width}×${display.bounds.height} DIP at ` +
-        `(${display.bounds.x}, ${display.bounds.y}) · match: ${c.matchMethod}`,
-    },
-    workArea: localWorkArea(display),
-  };
+export function describeImage(
+  d: Pick<ImageDebugResult, 'label' | 'displayId' | 'tile' | 'scaleFactor'>,
+): string {
+  const tile = d.tile.count > 1 ? ` tile ${d.tile.index + 1}/${d.tile.count}` : '';
+  return `${d.label}: display ${d.displayId}${tile}, ${Math.round(d.scaleFactor * 100)}%`;
 }
 
 function leak(before: DisplayCapture, after: DisplayCapture | undefined, rings: Rect[]) {
@@ -112,19 +105,46 @@ export async function runDebugRings(
   if (!(await ensureScreenPermission())) return null;
   const startedAt = Date.now();
 
-  overlays.clearAll();
+  await overlays.clearAll();
   await sleep(150);
 
   const before = await withOwnWindowsHidden(ownWindows(), () =>
     captureDisplays({ keepBitmap: true }),
   );
 
-  const perDisplay = before.captures.map((c) => {
+  const perImage = before.captures.map((c) => {
     const boxes = debugBoxes(c.image.width, c.image.height);
-    const locals = boxes.map((b) => imageBBoxToLocal(b.bbox, c.image, c.display));
-    overlays.render(c.display.id, sceneFor(c, boxes, locals));
+    const locals = boxes.map((b) => imageBBoxToLocal(b.bbox, c));
     return { c, boxes, locals };
   });
+
+  // One scene per display: rings from all of its tiles, one card for the first tile.
+  const byDisplay = new Map<number, typeof perImage>();
+  for (const p of perImage) {
+    byDisplay.set(p.c.display.id, [...(byDisplay.get(p.c.display.id) ?? []), p]);
+  }
+  for (const [displayId, items] of byDisplay) {
+    const first = items[0]!;
+    const { display } = first.c;
+    const scene: OverlayScene = {
+      rings: items.flatMap(({ boxes, locals }) =>
+        boxes.map((b, i) => ({ rect: locals[i]!, pad: b.pad, tone: b.tone })),
+      ),
+      card: {
+        anchor: first.locals[1]!,
+        title:
+          `display ${display.id} · ${Math.round(display.scaleFactor * 100)}%` +
+          (first.c.tile.count > 1 ? ` · ${first.c.tile.count} tiles` : ''),
+        body:
+          `${display.bounds.width}×${display.bounds.height} DIP at ` +
+          `(${display.bounds.x}, ${display.bounds.y}) · each image ` +
+          `${first.c.image.width}×${first.c.image.height} px · match: ${first.c.matchMethod}`,
+      },
+      workArea: localWorkArea(display),
+      origin: display.bounds,
+    };
+    await overlays.render(displayId, scene);
+  }
 
   await sleep(500); // let overlays paint
 
@@ -137,19 +157,23 @@ export async function runDebugRings(
     captureDisplays({ keepBitmap: true }),
   );
 
-  const displays: DisplayDebugResult[] = perDisplay.map(({ c, boxes, locals }) => {
+  const same = (a: DisplayCapture) => (b: DisplayCapture) =>
+    b.display.id === a.display.id && b.tile.index === a.tile.index;
+
+  const images: ImageDebugResult[] = perImage.map(({ c, boxes, locals }) => {
     const strokes = boxes.map((b) => strokeRectInImage(b, c));
-    const find = (list: DisplayCapture[]) => list.find((x) => x.display.id === c.display.id);
     return {
       label: c.label,
       displayId: c.display.id,
+      tile: c.tile,
       scaleFactor: c.display.scaleFactor,
       bounds: c.display.bounds,
+      region: c.region,
       image: c.image,
       matchMethod: c.matchMethod,
       boxes: boxes.map((b, i) => ({ ...b, local: locals[i]! })),
-      leakWithoutHiding: leak(c, find(afterRaw.captures), strokes),
-      leakWithGuard: leak(c, find(afterGuarded.captures), strokes),
+      leakWithoutHiding: leak(c, afterRaw.captures.find(same(c)), strokes),
+      leakWithGuard: leak(c, afterGuarded.captures.find(same(c)), strokes),
     };
   });
 
@@ -157,9 +181,9 @@ export async function runDebugRings(
     startedAt,
     platform: process.platform,
     hideDuringCapture: HIDE_DURING_CAPTURE,
-    displays,
+    images,
     skippedDisplayIds: before.skippedDisplayIds,
-    overlayBounds: overlays.diagnostics(),
+    overlayBounds: await overlays.diagnostics(),
     captures: {
       before: before.captures,
       afterRaw: afterRaw.captures,
@@ -175,29 +199,24 @@ function verdict(score: number | null): string {
 
 /** Plain-text summary for the dialog and the console. */
 export function summarize(run: DebugRun): string {
-  const lines = run.displays.map((d) =>
+  const lines = run.images.map((d) =>
     [
-      `${d.label}: display ${d.displayId}, ${Math.round(d.scaleFactor * 100)}%, ` +
-        `${d.bounds.width}×${d.bounds.height} DIP at (${d.bounds.x}, ${d.bounds.y}), ` +
+      `${describeImage(d)}, ` +
+        `region ${Math.round(d.region.width)}×${Math.round(d.region.height)} DIP at ` +
+        `(${Math.round(d.bounds.x + d.region.x)}, ${Math.round(d.bounds.y + d.region.y)}), ` +
         `image ${d.image.width}×${d.image.height}, match ${d.matchMethod}`,
       `  overlay in capture without hiding: ${verdict(d.leakWithoutHiding)}`,
       `  overlay in capture with guard:     ${verdict(d.leakWithGuard)}`,
     ].join('\n'),
   );
-  const mismatched = run.overlayBounds.filter(
-    (o) =>
-      o.expected.x !== o.actual.x ||
-      o.expected.y !== o.actual.y ||
-      o.expected.width !== o.actual.width ||
-      o.expected.height !== o.actual.height,
-  );
+  const mismatched = run.overlayBounds.filter((o) => !o.actual || !sameRect(o.expected, o.actual));
   if (run.skippedDisplayIds.length > 0) {
     lines.push(`Skipped displays (no safe capture match): ${run.skippedDisplayIds.join(', ')}`);
   }
   lines.push(
     mismatched.length === 0
-      ? 'Overlay windows: bounds match every display.'
-      : `Overlay windows with wrong bounds: ${mismatched.map((m) => m.displayId).join(', ')}`,
+      ? 'Overlay windows: drawing area matches every display.'
+      : `Overlay windows with wrong drawing area: ${mismatched.map((m) => m.displayId).join(', ')}`,
   );
   return lines.join('\n');
 }

@@ -13,6 +13,7 @@ import { writeDebugReport } from './debug/report';
 import { formatAccelerator, hotkeyCandidates, registerFirstAvailable } from './hotkey';
 import { MainWindow } from './main-window';
 import { OverlayManager } from './overlay/manager';
+import { appIcon } from './icons';
 import { createTray } from './tray';
 import { IPC, type AppInfo } from '../shared/ipc';
 
@@ -22,6 +23,12 @@ if (!app.isPackaged && debugPort && /^\d{2,5}$/.test(debugPort)) {
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
   app.commandLine.appendSwitch('remote-debugging-port', debugPort);
 }
+
+/**
+ * Developer tools (debug rings, report, dialog) exist only in development builds. Employees using
+ * a packaged build never see them: only the guides themselves are ever drawn on screen.
+ */
+const DEBUG_TOOLS = !app.isPackaged;
 
 // Module-level so the tray icon isn't garbage-collected.
 let tray: Tray | undefined;
@@ -33,8 +40,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function start() {
-  // Tray app: no Dock icon on macOS.
-  if (process.platform === 'darwin') app.dock?.hide();
+  // Dock icon (macOS) until the real logo is packaged.
+  if (process.platform === 'darwin') app.dock?.setIcon(appIcon(512));
 
   const mainWindow = new MainWindow();
   const overlays = new OverlayManager();
@@ -61,7 +68,7 @@ function start() {
       if (!run) return 'Screen Recording permission is needed first.';
       const summary = summarize(run);
       console.log(`debug rings\n${summary}`);
-      if (!app.isPackaged) {
+      {
         const dir = await writeDebugReport(run);
         const { response } = await dialog.showMessageBox({
           message: 'Debug rings drawn',
@@ -81,8 +88,12 @@ function start() {
     hotkeyLabel,
     hotkeyIsFallback: hotkey?.isFallback ?? false,
     onOpen: () => mainWindow.show(),
-    onDebugRings: () => void debugRings(),
-    onClearOverlay: () => overlays.clearAll(),
+    ...(DEBUG_TOOLS
+      ? {
+          onDebugRings: () => void debugRings(),
+          onClearOverlay: () => void overlays.clearAll(),
+        }
+      : {}),
     onQuit: () => app.quit(),
   });
 
@@ -92,15 +103,23 @@ function start() {
 
   ipcMain.handle(IPC.appInfo, (e): AppInfo | null =>
     fromMainWindow(e)
-      ? { hotkey: hotkeyLabel, hotkeyIsFallback: hotkey?.isFallback ?? false }
+      ? {
+          hotkey: hotkeyLabel,
+          hotkeyIsFallback: hotkey?.isFallback ?? false,
+          debugTools: DEBUG_TOOLS,
+        }
       : null,
   );
-  ipcMain.handle(IPC.debugRings, (e) => (fromMainWindow(e) ? debugRings() : null));
-  ipcMain.handle(IPC.clearOverlay, (e) => {
-    if (fromMainWindow(e)) overlays.clearAll();
-  });
+  if (DEBUG_TOOLS) {
+    ipcMain.handle(IPC.debugRings, (e) => (fromMainWindow(e) ? debugRings() : null));
+    ipcMain.handle(IPC.clearOverlay, (e) => {
+      if (fromMainWindow(e)) return overlays.clearAll();
+    });
+  }
 
   app.on('second-instance', () => mainWindow.show());
+  // macOS: clicking the Dock icon opens the Qhint window.
+  app.on('activate', () => mainWindow.show());
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
     overlays.dispose();
@@ -110,5 +129,5 @@ function start() {
   mainWindow.show();
 }
 
-// Tray app: closing windows never quits.
+// Closing the window hides it; Qhint keeps running in the tray / Dock until Quit.
 app.on('window-all-closed', () => {});

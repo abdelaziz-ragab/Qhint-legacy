@@ -7,7 +7,7 @@ import { app } from 'electron';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DisplayCapture } from '../capture/capture';
-import { summarize, type DebugRun } from './debug-rings';
+import { describeImage, summarize, type DebugRun } from './debug-rings';
 
 function esc(s: string): string {
   return s.replace(
@@ -31,7 +31,7 @@ export async function writeDebugReport(run: DebugRun): Promise<string> {
   const { captures: _captures, ...meta } = run;
   await writeFile(join(dir, 'report.json'), JSON.stringify(meta, null, 2));
 
-  const sections = run.displays
+  const sections = run.images
     .map((d) => {
       const overlays = d.boxes
         .map((b) => {
@@ -49,9 +49,9 @@ export async function writeDebugReport(run: DebugRun): Promise<string> {
         </figure>`;
       return `
         <section>
-          <h2>${esc(d.label)} · display ${d.displayId} · ${Math.round(d.scaleFactor * 100)}%</h2>
+          <h2>${esc(describeImage(d))}</h2>
           <div class="row">
-            ${figure('before', 'Before drawing (boxes = where rings should be)')}
+            ${figure('before', 'Before drawing: boxes show where the rings should be')}
             ${figure('after-raw', 'While drawn, without hiding our windows')}
             ${figure('after-guarded', 'While drawn, with capture guard')}
           </div>

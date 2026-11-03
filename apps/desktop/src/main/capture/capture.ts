@@ -1,19 +1,20 @@
 import { desktopCapturer, screen, type Display, type NativeImage } from 'electron';
-import type { Size } from '../../shared/geometry';
 import {
   aspectMismatch,
   DEFAULT_LONG_SIDE,
   orderDisplaysCursorFirst,
+  orderTilesCursorFirst,
+  planCapture,
+  type CaptureFrame,
   type DisplayGeometry,
 } from '../coords/coords';
 import { matchSourcesToDisplays, MAX_ASPECT_MISMATCH, type SourceMatch } from './match-sources';
 
-export interface DisplayCapture {
-  /** Label used in prompts: "screen_1" is always the display under the cursor. */
+/** One captured image: a whole display, or one tile of a very wide / tall display. */
+export interface DisplayCapture extends CaptureFrame {
+  /** Label used in prompts: "screen_1" is always the image under the cursor. */
   label: string;
-  display: DisplayGeometry;
-  /** Pixel size of the captured image. */
-  image: Size;
+  tile: { index: number; count: number };
   jpeg: Buffer;
   matchMethod: SourceMatch['method'];
   capturedAt: number;
@@ -42,16 +43,19 @@ export function currentDisplays(): DisplayGeometry[] {
   return screen.getAllDisplays().map(toGeometry);
 }
 
-/** Capture every display, cursor display first. */
+/** Capture every display (cursor display and tile first). */
 export async function captureDisplays(opts: CaptureOptions = {}): Promise<CaptureResult> {
   const longSide = opts.longSide ?? DEFAULT_LONG_SIDE;
   const quality = opts.quality ?? 80;
 
-  const displays = orderDisplaysCursorFirst(currentDisplays(), screen.getCursorScreenPoint());
-  // Thumbnails are scaled to fit inside this box, keeping aspect: long side == longSide.
+  const cursor = screen.getCursorScreenPoint();
+  const displays = orderDisplaysCursorFirst(currentDisplays(), cursor);
+  const plans = new Map(displays.map((d) => [d.id, planCapture(d, longSide)]));
+  // Thumbnails are scaled to fit inside this square, keeping aspect; big enough for every plan.
+  const box = Math.max(...[...plans.values()].map((p) => Math.max(p.full.width, p.full.height)));
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: longSide, height: longSide },
+    thumbnailSize: { width: box, height: box },
     fetchWindowIcons: false,
   });
 
@@ -69,26 +73,38 @@ export async function captureDisplays(opts: CaptureOptions = {}): Promise<Captur
   const capturedAt = Date.now();
 
   for (const display of displays) {
+    const plan = plans.get(display.id)!;
     const match = matches.find((m) => m.displayId === display.id);
     const thumb: NativeImage | undefined = sources.find((s) => s.id === match?.sourceId)?.thumbnail;
-    const image = thumb?.getSize();
-    if (!match || !thumb || thumb.isEmpty() || !image) {
+    if (!match || !thumb || thumb.isEmpty()) {
       skippedDisplayIds.push(display.id);
       continue;
     }
-    if (aspectMismatch(image, display) > MAX_ASPECT_MISMATCH) {
+    if (aspectMismatch(thumb.getSize(), display) > MAX_ASPECT_MISMATCH) {
       skippedDisplayIds.push(display.id);
       continue;
     }
-    captures.push({
-      label: `screen_${captures.length + 1}`,
-      display,
-      image,
-      jpeg: thumb.toJPEG(quality),
-      matchMethod: match.method,
-      capturedAt,
-      ...(opts.keepBitmap ? { bitmap: thumb.toBitmap() } : {}),
-    });
+
+    const size = thumb.getSize();
+    const full =
+      size.width === plan.full.width && size.height === plan.full.height
+        ? thumb
+        : thumb.resize({ width: plan.full.width, height: plan.full.height, quality: 'best' });
+
+    for (const tile of orderTilesCursorFirst(plan.tiles, display, cursor)) {
+      const img = plan.tiles.length === 1 ? full : full.crop(tile.crop);
+      captures.push({
+        label: `screen_${captures.length + 1}`,
+        display,
+        region: tile.region,
+        image: tile.image,
+        tile: { index: tile.index, count: tile.count },
+        jpeg: img.toJPEG(quality),
+        matchMethod: match.method,
+        capturedAt,
+        ...(opts.keepBitmap ? { bitmap: img.toBitmap() } : {}),
+      });
+    }
   }
   return { captures, skippedDisplayIds };
 }

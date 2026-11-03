@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Rect } from '../../../shared/geometry';
 import type { OverlayCard, OverlayRing, OverlayScene } from '../../../shared/overlay-scene';
 import { placeCard } from '../../../shared/placement';
@@ -42,20 +42,37 @@ function Card({ card, workArea }: { card: OverlayCard; workArea: Rect }) {
   );
 }
 
+/** Where this page sits on screen (global DIP), kept current across window moves/resizes. */
+function subscribeToWindowGeometry(onChange: () => void) {
+  window.addEventListener('resize', onChange);
+  return () => window.removeEventListener('resize', onChange);
+}
+const readPageOrigin = () => `${window.screenX},${window.screenY}`;
+
+function usePageOrigin() {
+  const [x, y] = useSyncExternalStore(subscribeToWindowGeometry, readPageOrigin)
+    .split(',')
+    .map(Number);
+  return { x: x ?? 0, y: y ?? 0 };
+}
+
 export function Overlay() {
   const [scene, setScene] = useState<OverlayScene | null>(null);
+  const page = usePageOrigin();
 
   useEffect(() => {
     window.qhintOverlay.onScene(setScene);
   }, []);
 
   if (!scene) return null;
+  // Scene rects are relative to the display; shift by any gap between display and page origin.
+  const offset = { left: scene.origin.x - page.x, top: scene.origin.y - page.y };
   return (
-    <>
+    <div className="stage" style={offset}>
       {scene.rings.map((ring, i) => (
         <Ring key={i} ring={ring} />
       ))}
       {scene.card ? <Card card={scene.card} workArea={scene.workArea} /> : null}
-    </>
+    </div>
   );
 }
