@@ -1,0 +1,46 @@
+# Local development only. All ports bind to loopback.
+name: qhint
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17
+    environment:
+      POSTGRES_USER: qhint
+      POSTGRES_PASSWORD: qhint_dev
+      POSTGRES_DB: qhint
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qhint -d qhint']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  auth:
+    build: ./docker/firebase-emulator
+    ports:
+      - '127.0.0.1:9099:9099'
+
+  storage:
+    image: fsouza/fake-gcs-server:1.56.1
+    command:
+      - -scheme=http
+      - -port=4443
+      - -external-url=http://localhost:4443
+      - -backend=filesystem
+      - -filesystem-root=/storage
+    ports:
+      - '127.0.0.1:4443:4443'
+    volumes:
+      - gcsdata:/storage
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:4443/storage/v1/b']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
+  gcsdata:
