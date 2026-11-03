@@ -1,0 +1,28 @@
+node_modules/
+dist/
+out/
+build/
+release/
+coverage/
+*.tsbuildinfo
+.DS_Store
+
+# environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+
+# local dev data
+.dev-data/
+firebase-debug.log
+*-debug.log
+
+# terraform
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.*
+infra/**/*.tfvars
+!infra/**/*.tfvars.example

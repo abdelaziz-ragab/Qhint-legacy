@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - services/*
+  - packages/*
+allowBuilds:
+  '@firebase/util': false
+  esbuild: true
+  protobufjs: false
+minimumReleaseAgeExclude:
+  - '@vitest/mocker@5.1.0'
+  - '@vitest/spy@5.1.0'
+  - vitest@5.1.0
