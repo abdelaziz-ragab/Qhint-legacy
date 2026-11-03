@@ -1,0 +1,77 @@
+/* Overlay windows are transparent and click-through; nothing here may capture input. */
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ring {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px solid; /* keep in sync with RING_BORDER in main/debug/debug-rings.ts */
+  border-radius: 8px;
+}
+
+.ring-primary {
+  border-color: #ffb020;
+  box-shadow:
+    0 0 0 1px rgba(20, 20, 20, 0.85),
+    inset 0 0 0 1px rgba(20, 20, 20, 0.85),
+    0 0 18px rgba(255, 176, 32, 0.55);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.ring-debug {
+  border-color: #00b3ff;
+  border-style: dashed;
+  border-radius: 0;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(20, 20, 20, 0.85),
+      inset 0 0 0 1px rgba(20, 20, 20, 0.85),
+      0 0 10px rgba(255, 176, 32, 0.45);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(20, 20, 20, 0.85),
+      inset 0 0 0 1px rgba(20, 20, 20, 0.85),
+      0 0 24px rgba(255, 176, 32, 0.8);
+  }
+}
+
+.card {
+  position: absolute;
+  box-sizing: border-box;
+  max-width: 320px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1d2433;
+  font:
+    13px/1.4 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.card-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.card-body {
+  color: #5b6478;
+}

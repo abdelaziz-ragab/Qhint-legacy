@@ -19,6 +19,25 @@ pnpm test       # unit tests (no Docker needed)
 pnpm dev        # start Docker services, migrate + seed, then both APIs and the desktop app
 ```
 
+## Windows test machines
+
+Only the desktop app is needed (no Docker). In PowerShell:
+
+```powershell
+winget install Git.Git GitHub.cli Schniz.fnm pnpm.pnpm
+# new PowerShell window, then:
+Add-Content $PROFILE 'fnm env --use-on-cd --version-file-strategy=recursive --shell powershell | Out-String | Invoke-Expression'
+# new PowerShell window again, then:
+gh auth login
+gh repo clone abdelaziz-ragab/Qhint qhint
+cd qhint
+fnm install
+pnpm i
+pnpm dev:desktop
+```
+
+Pull and rerun `pnpm dev:desktop` to test new changes. Manual test steps: `apps/desktop/TESTING.md`.
+
 ## Commands
 
 | Command            | What it does                                                        |
