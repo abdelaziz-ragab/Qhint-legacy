@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --clear-screen=false src/server.ts",
-    "start": "tsx src/server.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "dev": "tsx watch --clear-screen=false --env-file=../../.env.development src/server.ts",
+    "start": "node dist/server.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node ../../scripts/build-service.mjs control-api"
   },
   "dependencies": {
     "@qhint/schema": "workspace:*",
     "fastify": "^5.12.8",
     "fastify-type-provider-zod": "^7.0.0",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@qhint/server-kit": "workspace:*",
+    "kysely": "^0.29.8",
+    "firebase-admin": "^14.5.0",
+    "@google-cloud/bigquery": "^9.6.0"
   }
 }

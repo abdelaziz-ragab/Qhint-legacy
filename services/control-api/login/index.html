@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Sign in to Qhint</title>
+    <style>
+      :root {
+        --bg: #f4f5f7;
+        --card: #ffffff;
+        --text: #1d2433;
+        --muted: #5b6478;
+        --border: #c4cad6;
+        --border-strong: #8a93a6;
+        --primary: #1d2433;
+        --primary-text: #ffffff;
+        --primary-hover: #343d52;
+        --secondary-hover: #f1f3f6;
+        --link: #2853c9;
+        --focus: #2f6bff;
+        --error: #b42318;
+        --error-bg: #fef3f2;
+        --ok: #067647;
+        --ok-bg: #ecfdf3;
+        --google-bg: #ffffff;
+        --google-border: #747775;
+        --google-text: #1f1f1f;
+        --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 28px rgba(16, 24, 40, 0.08);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1218;
+          --card: #1a1f29;
+          --text: #e8ebf2;
+          --muted: #a3abbd;
+          --border: #3a4252;
+          --border-strong: #6b7488;
+          --primary: #e8ebf2;
+          --primary-text: #12161e;
+          --primary-hover: #ffffff;
+          --secondary-hover: #232937;
+          --link: #8fb0ff;
+          --focus: #7aa2ff;
+          --error: #ff9c8f;
+          --error-bg: #3a1d1b;
+          --ok: #6ee7a8;
+          --ok-bg: #12301f;
+          --google-bg: #131314;
+          --google-border: #8e918f;
+          --google-text: #e3e3e3;
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 28px rgba(0, 0, 0, 0.35);
+        }
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px 16px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          'Helvetica Neue',
+          Arial,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main {
+        width: 100%;
+        max-width: 400px;
+        background: var(--card);
+        border-radius: 14px;
+        padding: 32px;
+        box-shadow: var(--shadow);
+      }
+      @media (max-width: 420px) {
+        body {
+          padding: 0;
+          place-items: stretch;
+        }
+        main {
+          max-width: none;
+          border-radius: 0;
+          box-shadow: none;
+          padding: 32px 20px;
+        }
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        font-size: 18px;
+        letter-spacing: -0.01em;
+        margin-bottom: 20px;
+      }
+      .brand svg {
+        width: 28px;
+        height: 28px;
+        flex: none;
+      }
+      .brand .mark-fg {
+        stroke: var(--card);
+      }
+      h1 {
+        font-size: 22px;
+        line-height: 1.3;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+      }
+      h1:focus {
+        outline: none;
+      }
+      .lead {
+        color: var(--muted);
+        margin: 0 0 20px;
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      label {
+        display: block;
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .input-wrap {
+        position: relative;
+      }
+      input[type='email'],
+      input[type='password'],
+      input[type='text'] {
+        width: 100%;
+        height: 44px;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--card);
+        color: var(--text);
+        font: inherit;
+      }
+      .input-wrap input {
+        padding-right: 68px;
+      }
+      input:hover {
+        border-color: var(--border-strong);
+      }
+      input[aria-invalid='true'] {
+        border-color: var(--error);
+      }
+      input:read-only {
+        opacity: 0.75;
+      }
+      :focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      input:focus-visible {
+        outline-offset: 0;
+        border-color: var(--focus);
+      }
+      .field-error {
+        color: var(--error);
+        font-size: 13px;
+        margin: 6px 0 0;
+      }
+      .toggle {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        height: 32px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--link);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .toggle:hover:not(:disabled) {
+        background: var(--secondary-hover);
+      }
+      .row-end {
+        display: flex;
+        justify-content: flex-end;
+        margin: -8px 0 16px;
+      }
+      .link {
+        padding: 2px 0;
+        border: 0;
+        background: none;
+        color: var(--link);
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .link:hover:not(:disabled) {
+        text-decoration-thickness: 2px;
+      }
+      .back {
+        display: block;
+        margin: 16px auto 0;
+      }
+      .btn {
+        width: 100%;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 0 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background-color 0.15s,
+          border-color 0.15s;
+      }
+      .btn + .btn {
+        margin-top: 10px;
+      }
+      .btn:hover:not(:disabled) {
+        background: var(--secondary-hover);
+        border-color: var(--border-strong);
+      }
+      .btn-primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-text);
+      }
+      .btn-primary:hover:not(:disabled) {
+        background: var(--primary-hover);
+        border-color: var(--primary-hover);
+      }
+      .btn-google {
+        background: var(--google-bg);
+        border-color: var(--google-border);
+        color: var(--google-text);
+        font-weight: 500;
+      }
+      .btn-google:hover:not(:disabled) {
+        background: var(--google-bg);
+        border-color: var(--google-border);
+        box-shadow: 0 1px 3px rgba(60, 64, 67, 0.3);
+      }
+      .btn:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
+      .btn[aria-busy='true'] {
+        opacity: 1;
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+        flex: none;
+      }
+      .btn-soon {
+        opacity: 0.55;
+      }
+      .btn-soon:disabled {
+        opacity: 0.55;
+      }
+      .btn .label {
+        white-space: nowrap;
+      }
+      .badge {
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.4;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border-strong);
+        color: var(--muted);
+      }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        flex: none;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .divider {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 20px 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .divider::before,
+      .divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+      }
+      .notice {
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 0 0 16px;
+        font-size: 14px;
+      }
+      .notice:empty {
+        display: none;
+      }
+      #error {
+        color: var(--error);
+        background: var(--error-bg);
+      }
+      #status {
+        color: var(--ok);
+        background: var(--ok-bg);
+      }
+      .footnote {
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+        .spinner {
+          border-right-color: currentColor;
+          opacity: 0.6;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="card">
+      <div class="brand">
+        <svg viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+          <rect width="28" height="28" rx="7" fill="currentColor" />
+          <circle class="mark-fg" cx="13.5" cy="13.5" r="6" fill="none" stroke-width="2.6" />
+          <path class="mark-fg" d="M17 17l4.5 4.5" stroke-width="2.6" stroke-linecap="round" />
+        </svg>
+        <span>Qhint</span>
+      </div>
+
+      <h1 id="title" tabindex="-1">Sign in to Qhint</h1>
+      <p id="lead" class="lead">Use your work account.</p>
+
+      <div id="error" class="notice" role="alert" aria-live="assertive"></div>
+      <div id="status" class="notice" role="status" aria-live="polite"></div>
+
+      <!-- Email + password (primary path) -->
+      <section id="view-signin" hidden>
+        <form id="signin-form" novalidate>
+          <div class="field">
+            <label for="email">Work email</label>
+            <input
+              id="email"
+              name="username"
+              type="email"
+              inputmode="email"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="name@company.com"
+              required
+              aria-describedby="email-error"
+            />
+            <p id="email-error" class="field-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <div class="input-wrap">
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                aria-describedby="password-error"
+              />
+              <button
+                id="toggle-password"
+                class="toggle"
+                type="button"
+                data-action
+                aria-controls="password"
+                aria-pressed="false"
+                aria-label="Show password"
+              >
+                Show
+              </button>
+            </div>
+            <p id="password-error" class="field-error" hidden></p>
+          </div>
+          <div class="row-end">
+            <button id="forgot" class="link" type="button" data-action>Forgot password?</button>
+          </div>
+          <button id="signin" class="btn btn-primary" type="submit" data-action>
+            <span class="label">Sign in</span>
+          </button>
+        </form>
+
+        <div class="divider" role="separator">or</div>
+
+        <button id="google" class="btn btn-google" type="button" data-action>
+          <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+            <path
+              fill="#EA4335"
+              d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+            />
+            <path
+              fill="#4285F4"
+              d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+            />
+            <path
+              fill="#34A853"
+              d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+            />
+          </svg>
+          <span class="label">Continue with Google</span>
+        </button>
+
+        <button id="sso" class="btn" type="button" data-action>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <circle cx="8" cy="15" r="4.5" />
+            <path d="M11.2 11.8L20 3M16.5 6.5l3 3M14 9l2 2" />
+          </svg>
+          <span class="label">Sign in with SSO</span>
+        </button>
+
+        <button id="microsoft" class="btn btn-soon" type="button" disabled aria-disabled="true">
+          <svg viewBox="0 0 21 21" aria-hidden="true" focusable="false">
+            <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+            <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+            <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+            <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+          </svg>
+          <span class="label">Continue with Microsoft</span>
+          <span id="microsoft-soon" class="badge">Coming soon</span>
+        </button>
+      </section>
+
+      <!-- Password reset -->
+      <section id="view-reset" hidden>
+        <form id="reset-form" novalidate>
+          <div class="field">
+            <label for="reset-email">Work email</label>
+            <input
+              id="reset-email"
+              type="email"
+              inputmode="email"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="name@company.com"
+              required
+              aria-describedby="reset-email-error"
+            />
+            <p id="reset-email-error" class="field-error" hidden></p>
+          </div>
+          <button id="reset-submit" class="btn btn-primary" type="submit" data-action>
+            <span class="label">Send reset link</span>
+          </button>
+        </form>
+        <button class="link back" type="button" data-action data-back>Back to sign in</button>
+      </section>
+
+      <!-- Single sign-on -->
+      <section id="view-sso" hidden>
+        <form id="sso-form" novalidate>
+          <div class="field">
+            <label for="sso-email">Work email</label>
+            <input
+              id="sso-email"
+              type="email"
+              inputmode="email"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="name@company.com"
+              required
+              aria-describedby="sso-email-error"
+            />
+            <p id="sso-email-error" class="field-error" hidden></p>
+          </div>
+          <button id="sso-submit" class="btn btn-primary" type="submit" data-action>
+            <span class="label">Continue</span>
+          </button>
+        </form>
+        <button class="link back" type="button" data-action data-back>Back</button>
+      </section>
+
+      <p id="footnote" class="footnote" hidden>
+        Need access? Ask your workspace admin for an invite.
+      </p>
+    </main>
+    <script type="module" src="/login/app.js"></script>
+  </body>
+</html>
