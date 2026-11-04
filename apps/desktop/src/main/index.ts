@@ -15,7 +15,8 @@ import { MainWindow } from './main-window';
 import { OverlayManager } from './overlay/manager';
 import { appIcon } from './icons';
 import { createTray } from './tray';
-import { IPC, type AppInfo } from '../shared/ipc';
+import { IPC, type AppInfo, type AuthStatus, type ProcedureLists } from '../shared/ipc';
+import { AuthSession } from './auth/session';
 
 // Dev only: QHINT_DEBUG_PORT=9222 exposes Chrome DevTools Protocol for inspecting our windows.
 const debugPort = process.env.QHINT_DEBUG_PORT;
@@ -29,6 +30,9 @@ if (!app.isPackaged && debugPort && /^\d{2,5}$/.test(debugPort)) {
  * a packaged build never see them: only the guides themselves are ever drawn on screen.
  */
 const DEBUG_TOOLS = !app.isPackaged;
+
+/** Control plane address. Development default: local control-api. */
+const CONTROL_API_URL = process.env.QHINT_CONTROL_API_URL ?? 'http://127.0.0.1:8081';
 
 // Module-level so the tray icon isn't garbage-collected.
 let tray: Tray | undefined;
@@ -116,6 +120,43 @@ function start() {
       if (fromMainWindow(e)) return overlays.clearAll();
     });
   }
+
+  // ---------------------------------------------------------------- sign-in + data
+  const session = new AuthSession(CONTROL_API_URL);
+  const restored = session.restore().catch(() => session.status());
+
+  const toStatus = (err?: unknown): AuthStatus =>
+    err instanceof Error ? { signedIn: false, error: err.message } : session.status();
+
+  ipcMain.handle(IPC.authStatus, async (e) =>
+    fromMainWindow(e) ? (await restored, session.status()) : null,
+  );
+  ipcMain.handle(IPC.authSignIn, async (e) => {
+    if (!fromMainWindow(e)) return null;
+    try {
+      const status = await session.signIn();
+      mainWindow.show(); // bring Qhint back to the front after the browser
+      return status;
+    } catch (err) {
+      return toStatus(err);
+    }
+  });
+  ipcMain.handle(IPC.authSignOut, async (e) => {
+    if (!fromMainWindow(e)) return null;
+    await session.signOut();
+    return session.status();
+  });
+  ipcMain.handle(IPC.procedures, async (e): Promise<ProcedureLists | null> => {
+    const base = session.dataApiUrl();
+    if (!fromMainWindow(e) || !base) return null;
+    const list = async (scope: 'company' | 'mine') => {
+      const res = await session.fetch(`${base}/procedures?scope=${scope}`);
+      if (!res.ok) throw new Error(`procedures_${res.status}`);
+      return ((await res.json()) as { procedures: ProcedureLists['company'] }).procedures;
+    };
+    const [company, mine] = await Promise.all([list('company'), list('mine')]);
+    return { company, mine };
+  });
 
   app.on('second-instance', () => mainWindow.show());
   // macOS: clicking the Dock icon opens the Qhint window.

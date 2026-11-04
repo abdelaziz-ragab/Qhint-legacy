@@ -3,6 +3,10 @@ export const IPC = {
   appInfo: 'app:info',
   debugRings: 'debug:rings',
   clearOverlay: 'overlay:clear',
+  authStatus: 'auth:status',
+  authSignIn: 'auth:sign-in',
+  authSignOut: 'auth:sign-out',
+  procedures: 'data:procedures',
 } as const;
 
 export interface AppInfo {
@@ -10,4 +14,20 @@ export interface AppInfo {
   hotkeyIsFallback: boolean;
   /** True only in development builds. */
   debugTools: boolean;
+}
+
+export type AuthStatus =
+  | { signedIn: false; error?: string }
+  | { signedIn: true; email: string | null; tenantName: string; role: 'employee' | 'admin' };
+
+export interface ProcedureListItem {
+  id: string;
+  title: string;
+  status: string;
+  visibility: string;
+}
+
+export interface ProcedureLists {
+  company: ProcedureListItem[];
+  mine: ProcedureListItem[];
 }
