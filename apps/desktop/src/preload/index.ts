@@ -18,6 +18,8 @@ const api: QhintApi = {
     signOut: () => ipcRenderer.invoke(IPC.authSignOut) as Promise<AuthStatus | null>,
   },
   procedures: () => ipcRenderer.invoke(IPC.procedures) as Promise<ProcedureLists | null>,
+  runSample: (id: string) =>
+    ipcRenderer.invoke(IPC.runSample, id) as Promise<{ ok: boolean; error?: string } | null>,
 };
 
 contextBridge.exposeInMainWorld('qhint', api);

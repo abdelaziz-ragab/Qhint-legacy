@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Rect } from '../../../shared/geometry';
-import type { OverlayCard, OverlayRing, OverlayScene } from '../../../shared/overlay-scene';
+import type {
+  OverlayCard,
+  OverlayGuide,
+  OverlayRing,
+  OverlayScene,
+} from '../../../shared/overlay-scene';
 import { placeCard } from '../../../shared/placement';
 
 function rectStyle(r: Rect) {
@@ -42,6 +47,89 @@ function Card({ card, workArea }: { card: OverlayCard; workArea: Rect }) {
   );
 }
 
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Pointer glides from where the mouse was to the target, then the ring/box appears. */
+function Guide({ guide }: { guide: OverlayGuide }) {
+  if (guide.kind === 'done') return <DoneMark rect={guide.rect} />;
+  return <Pointer guide={guide} />;
+}
+
+/** Brief "that worked" confirmation on the element the user just used. */
+function DoneMark({ rect }: { rect: OverlayGuide['rect'] }) {
+  const pad = 5;
+  return (
+    <div
+      className="ring ring-done"
+      style={rectStyle({
+        x: rect.x - pad,
+        y: rect.y - pad,
+        width: rect.width + 2 * pad,
+        height: rect.height + 2 * pad,
+      })}
+    >
+      <span className="done-badge" aria-hidden="true">
+        ✓
+      </span>
+    </div>
+  );
+}
+
+function Pointer({ guide }: { guide: OverlayGuide }) {
+  const { rect } = guide;
+  // Rest the pointer's tip on the target's lower-right corner so it never covers the label.
+  const target = { x: rect.x + rect.width - 4, y: rect.y + rect.height - 4 };
+  const from = guide.pointerFrom ?? target;
+  // Remounted for every new target (keyed by guide.key), so initial state is the start position.
+  const [pos, setPos] = useState(reducedMotion() ? target : from);
+  const [arrived, setArrived] = useState(reducedMotion());
+
+  useEffect(() => {
+    if (arrived) return;
+    // Next frame: move to the target so the CSS transition animates the glide.
+    const raf = requestAnimationFrame(() => setPos(target));
+    const done = setTimeout(() => setArrived(true), 650);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(done);
+    };
+    // Runs once per mount; a new target remounts the component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pad = 5;
+  const box = {
+    x: rect.x - pad,
+    y: rect.y - pad,
+    width: rect.width + 2 * pad,
+    height: rect.height + 2 * pad,
+  };
+  return (
+    <>
+      {arrived ? (
+        <div
+          className={`ring ${guide.kind === 'type' ? 'ring-type' : 'ring-primary'}`}
+          style={rectStyle(box)}
+        >
+          {guide.kind === 'type' && guide.text ? (
+            <span className="type-label">Type: {guide.text}</span>
+          ) : null}
+        </div>
+      ) : null}
+      <svg
+        className="pointer"
+        style={{ left: pos.x, top: pos.y }}
+        width="28"
+        height="28"
+        viewBox="0 0 28 28"
+        aria-hidden="true"
+      >
+        <path d="M3 2 L3 22 L9 16.5 L13 25 L17 23.2 L13 14.8 L21 14.8 Z" />
+      </svg>
+    </>
+  );
+}
+
 /** Where this page sits on screen (global DIP), kept current across window moves/resizes. */
 function subscribeToWindowGeometry(onChange: () => void) {
   window.addEventListener('resize', onChange);
@@ -73,6 +161,7 @@ export function Overlay() {
         <Ring key={i} ring={ring} />
       ))}
       {scene.card ? <Card card={scene.card} workArea={scene.workArea} /> : null}
+      {scene.guide ? <Guide key={scene.guide.key} guide={scene.guide} /> : null}
     </div>
   );
 }

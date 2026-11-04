@@ -179,9 +179,13 @@ function showDone(tenantName) {
   document.title = 'Signed in to Qhint';
   setNotice(
     'status',
-    `Signed in to ${tenantName || 'Qhint'}. You can close this tab and return to Qhint.`,
+    `Signed in to ${tenantName || 'Qhint'}. Taking you back to Qhint… You can close this tab.`,
   );
+  $('open-app').hidden = false;
   $('title').focus();
+  // Hand over to the desktop app: the OS brings Qhint to the front for its own link. The link
+  // carries nothing (the sign-in already went over the loopback); it only says "come forward".
+  window.location.href = 'qhint://signed-in';
 }
 
 function showBlocked(text) {

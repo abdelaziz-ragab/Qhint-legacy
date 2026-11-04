@@ -14,6 +14,9 @@ import type { ControlDB } from '../../services/control-api/src/db/types';
 import { PgEventSink } from '../../services/control-api/src/events';
 import { FirebaseIdentityAdmin } from '../../services/control-api/src/identity';
 import { buildApp as buildData } from '../../services/data-api/src/app';
+import { defaultGatewayConfig } from '../../services/data-api/src/gateway/config';
+import { FakeModelProvider } from '../../services/data-api/src/gateway/fake-provider';
+import { ModelGateway } from '../../services/data-api/src/gateway/gateway';
 import { HttpDataPlaneResolver } from '../../services/data-api/src/plane';
 import { EmulatorStorage } from '../../services/data-api/src/storage';
 import type { ContentDB } from '../../services/data-api/src/store/db-types';
@@ -207,6 +210,12 @@ beforeAll(async () => {
     verifier: verifier(),
     planes: new HttpDataPlaneResolver(controlUrl, INTERNAL),
     storage: new EmulatorStorage(STORAGE),
+    // No real AI in tests: the gateway answers "not sure".
+    gateway: new ModelGateway(
+      new FakeModelProvider(() => 'not json'),
+      defaultGatewayConfig('e2e-analytics-key-local-only-000000000'),
+      () => {},
+    ),
   });
   await data.listen({ port: 0, host: '127.0.0.1' });
   dataUrl = `http://127.0.0.1:${(data.server.address() as AddressInfo).port}`;

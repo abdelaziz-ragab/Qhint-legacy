@@ -1,16 +1,15 @@
 import type { ModelCallType } from '@qhint/schema';
+import type { PromptRequest } from '@qhint/prompts';
 
 export type CallType = ModelCallType;
+export type { ContentPart } from '@qhint/prompts';
 
-export type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image'; mediaType: 'image/jpeg' | 'image/png'; data: Buffer; label?: string };
-
-export interface ModelRequest {
-  system: string;
-  content: ContentPart[];
-  maxTokens: number;
-}
+/** What the gateway sends to a provider: a built prompt. */
+export type ModelRequest = Pick<
+  PromptRequest,
+  'system' | 'content' | 'maxTokens' | 'outputSchema' | 'tools' | 'effort'
+> &
+  Partial<Pick<PromptRequest, 'promptId'>>;
 
 export interface Usage {
   inputTokens: number;
@@ -21,6 +20,9 @@ export interface Usage {
 
 export interface ProviderResponse {
   text: string;
+  toolCalls: { name: string; input: unknown }[];
+  /** e.g. end_turn, tool_use, max_tokens, refusal. */
+  stopReason: string;
   usage: Usage;
 }
 

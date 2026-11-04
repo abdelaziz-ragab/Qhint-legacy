@@ -1,5 +1,6 @@
 import type { AppInfo, AuthStatus, ProcedureLists } from '../shared/ipc';
 import type { OverlayScene } from '../shared/overlay-scene';
+import type { PanelAction, PanelView } from '../shared/panel';
 
 /** Surface exposed to the main window renderer as `window.qhint`. */
 export interface QhintApi {
@@ -16,6 +17,8 @@ export interface QhintApi {
     signOut(): Promise<AuthStatus | null>;
   };
   procedures(): Promise<ProcedureLists | null>;
+  /** Development builds: run a hand-written sample guide. */
+  runSample(id: string): Promise<{ ok: boolean; error?: string } | null>;
 }
 
 /** Surface exposed to overlay windows as `window.qhintOverlay`. */
@@ -23,9 +26,16 @@ export interface QhintOverlayApi {
   onScene(listener: (scene: OverlayScene) => void): void;
 }
 
+/** Surface exposed to the step card window as `window.qhintPanel`. */
+export interface QhintPanelApi {
+  onView(listener: (view: PanelView) => void): void;
+  act(action: PanelAction): void;
+}
+
 declare global {
   interface Window {
     qhint: QhintApi;
     qhintOverlay: QhintOverlayApi;
+    qhintPanel: QhintPanelApi;
   }
 }

@@ -257,3 +257,18 @@ export function aspectMismatch(image: Size, d: DisplayGeometry): number {
   const b = d.bounds.width / d.bounds.height;
   return Math.abs(a - b) / b;
 }
+
+/** Global DIP rect -> image-pixel box on the frame (inverse of imageBBoxToGlobal). */
+export function globalToImageBBox(r: Rect, f: CaptureFrame): BBox {
+  const { sx, sy } = scale(f);
+  const x = r.x - f.display.bounds.x - f.region.x;
+  const y = r.y - f.display.bounds.y - f.region.y;
+  return [x / sx, y / sy, (x + r.width) / sx, (y + r.height) / sy];
+}
+
+/** Does the frame's region contain this global point? */
+export function frameContains(f: CaptureFrame, p: Point): boolean {
+  const x = p.x - f.display.bounds.x - f.region.x;
+  const y = p.y - f.display.bounds.y - f.region.y;
+  return x >= 0 && y >= 0 && x < f.region.width && y < f.region.height;
+}

@@ -1,0 +1,168 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+.panel {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #1d2433;
+  font:
+    14px/1.4 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.progress {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6478;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #5b6478;
+}
+
+.close {
+  border: 0;
+  background: none;
+  font-size: 20px;
+  line-height: 1;
+  color: #5b6478;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.instruction {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.type-chip {
+  margin: 8px 0 0;
+  display: inline-block;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+}
+
+.status {
+  margin: 8px 0 0;
+  font-size: 13px;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.status.info {
+  color: #5b6478;
+}
+.status.ok {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.status.warn {
+  color: #92400e;
+}
+
+.spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+footer {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+footer button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid #ccd2dc;
+  background: #ffffff;
+  color: #1d2433;
+  cursor: pointer;
+}
+footer button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+footer button.primary {
+  background: #1d2433;
+  border-color: #1d2433;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel {
+    background: #1f2430;
+    color: #e8ebf2;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  footer button {
+    background: #2a3040;
+    color: #e8ebf2;
+    border-color: #3a4256;
+  }
+  footer button.primary {
+    background: #e8ebf2;
+    color: #1d2433;
+    border-color: #e8ebf2;
+  }
+  .type-chip {
+    background: #1e3a8a;
+    color: #dbeafe;
+  }
+  .status.warn {
+    color: #fbbf24;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

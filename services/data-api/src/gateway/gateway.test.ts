@@ -2,7 +2,7 @@ import { LocateResult, OperatorEvent } from '@qhint/schema';
 import { describe, expect, it } from 'vitest';
 import { defaultGatewayConfig } from './config';
 import { FakeModelProvider } from './fake-provider';
-import { costMicroUsd, ModelGateway, parseStrictJson } from './gateway';
+import { costMicroUsd, ModelGateway, parseStrictJson, strictJson } from './gateway';
 import type { ModelRequest } from './types';
 
 const caller = {
@@ -34,20 +34,20 @@ function setup(respond: (model: string) => string | Error) {
 describe('ModelGateway', () => {
   it('returns validated JSON from the primary model for the call type', async () => {
     const { gateway, provider } = setup(() => found);
-    const r = await gateway.call('locate', caller, request, LocateResult);
+    const r = await gateway.call('locate', caller, request, strictJson(LocateResult));
     expect(r.ok && r.value.kind).toBe('found');
     expect(provider.calls[0]!.model).toBe('claude-haiku-5-5');
   });
 
   it('uses the escalation model when asked', async () => {
     const { gateway, provider } = setup(() => found);
-    await gateway.call('locate', caller, request, LocateResult, 'escalation');
+    await gateway.call('locate', caller, request, strictJson(LocateResult), 'escalation');
     expect(provider.calls[0]!.model).toBe('claude-sonnet-5-5');
   });
 
   it('routes ingest and assess to Sonnet', async () => {
     const { gateway, provider } = setup(() => '{}');
-    await gateway.call('assess', caller, request, LocateResult);
+    await gateway.call('assess', caller, request, strictJson(LocateResult));
     expect(provider.calls[0]!.model).toBe('claude-sonnet-5-5');
   });
 
@@ -55,7 +55,7 @@ describe('ModelGateway', () => {
     const { gateway } = setup(() =>
       JSON.stringify({ kind: 'none', reason: 'ambiguous', hint: 'two buttons' }),
     );
-    const r = await gateway.call('locate', caller, request, LocateResult);
+    const r = await gateway.call('locate', caller, request, strictJson(LocateResult));
     expect(r.ok && r.value.kind).toBe('none');
   });
 
@@ -75,13 +75,13 @@ describe('ModelGateway', () => {
     ['trailing text', `${found} hope that helps`],
   ])('rejects %s as invalid_output (never guesses)', async (_name, text) => {
     const { gateway } = setup(() => text);
-    const r = await gateway.call('locate', caller, request, LocateResult);
+    const r = await gateway.call('locate', caller, request, strictJson(LocateResult));
     expect(r).toMatchObject({ ok: false, code: 'invalid_output' });
   });
 
   it('reports provider failures', async () => {
     const { gateway } = setup(() => new Error('upstream 529'));
-    expect(await gateway.call('verify', caller, request, LocateResult)).toMatchObject({
+    expect(await gateway.call('verify', caller, request, strictJson(LocateResult))).toMatchObject({
       ok: false,
       code: 'provider_error',
     });
@@ -89,7 +89,12 @@ describe('ModelGateway', () => {
 
   it('emits one content-free, whitelisted event per call', async () => {
     const { gateway, events } = setup(() => found);
-    await gateway.call('locate', { ...caller, appCategory: 'web' }, request, LocateResult);
+    await gateway.call(
+      'locate',
+      { ...caller, appCategory: 'web' },
+      request,
+      strictJson(LocateResult),
+    );
     expect(events).toHaveLength(1);
     const e = events[0]!;
     expect(OperatorEvent.safeParse(e).success).toBe(true);
@@ -109,7 +114,7 @@ describe('ModelGateway', () => {
 
   it('records failures with an outcome code too', async () => {
     const { gateway, events } = setup(() => 'not json');
-    await gateway.call('locate', caller, request, LocateResult);
+    await gateway.call('locate', caller, request, strictJson(LocateResult));
     expect(events[0]).toMatchObject({ outcome: 'invalid_output' });
     expect(OperatorEvent.safeParse(events[0]).success).toBe(true);
   });
@@ -136,5 +141,34 @@ describe('helpers', () => {
         undefined,
       ),
     ).toBe(0);
+  });
+});
+
+describe('refusals and tool calls', () => {
+  it('records a refusal as its own outcome, never as a result', async () => {
+    const events: OperatorEvent[] = [];
+    const provider = new FakeModelProvider(() => ({
+      text: '',
+      toolCalls: [],
+      stopReason: 'refusal',
+    }));
+    const gateway = new ModelGateway(provider, defaultGatewayConfig('k'.repeat(32)), (e) =>
+      events.push(e),
+    );
+    expect(await gateway.call('locate', caller, request, strictJson(LocateResult))).toMatchObject({
+      ok: false,
+      code: 'refusal',
+    });
+    expect(events[0]).toMatchObject({ outcome: 'refusal' });
+  });
+
+  it('hands tool calls to the interpreter', async () => {
+    const provider = new FakeModelProvider(() => ({
+      text: '',
+      toolCalls: [{ name: 'left_click', input: { coordinate: [10, 20] } }],
+    }));
+    const gateway = new ModelGateway(provider, defaultGatewayConfig('k'.repeat(32)), () => {});
+    const r = await gateway.call('locate', caller, request, (res) => res.toolCalls[0]!.name);
+    expect(r).toMatchObject({ ok: true, value: 'left_click' });
   });
 });

@@ -92,6 +92,13 @@ export function App() {
     run('procedures', async () => {
       setLists(await window.qhint.procedures());
     });
+  const [guideError, setGuideError] = useState<string | null>(null);
+  const runSample = () =>
+    run('sample', async () => {
+      setGuideError(null);
+      const r = await window.qhint.runSample('libreoffice-insert-table');
+      if (r && !r.ok) setGuideError(r.error ?? 'failed');
+    });
   const runDebug = () =>
     run('debug', async () => {
       setSummary(await window.qhint.debugRings());
@@ -142,6 +149,19 @@ export function App() {
       {info?.debugTools ? (
         <div style={styles.section}>
           <p style={styles.muted}>Developer tools</p>
+          <div style={styles.row}>
+            <button
+              style={styles.button}
+              disabled={!!busy || !auth?.signedIn}
+              onClick={() => void runSample()}
+              title={auth?.signedIn ? '' : 'Sign in first'}
+            >
+              Run sample guide: LibreOffice — insert a table
+            </button>
+          </div>
+          {guideError ? (
+            <p style={styles.error}>Couldn&apos;t start the guide: {guideError}</p>
+          ) : null}
           <div style={styles.row}>
             <button style={styles.button} disabled={!!busy} onClick={() => void runDebug()}>
               {busy === 'debug' ? 'Capturing…' : 'Debug: capture + draw rings'}

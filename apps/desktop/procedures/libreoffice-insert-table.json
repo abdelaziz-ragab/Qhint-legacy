@@ -1,0 +1,105 @@
+{
+  "id": "00000000-0000-4000-8000-0000000a0001",
+  "tenantId": "00000000-0000-4000-8000-000000000000",
+  "ownerId": "00000000-0000-4000-8000-000000000000",
+  "visibility": "company",
+  "status": "published",
+  "version": 1,
+  "source": "generated",
+  "title": "Insert a table with a header row (LibreOffice Writer)",
+  "apps": [
+    {
+      "name": "LibreOffice Writer",
+      "kind": "native"
+    }
+  ],
+  "variables": [],
+  "steps": [
+    {
+      "id": "s1",
+      "instruction": "Open the Table menu in the menu bar.",
+      "app": {
+        "name": "LibreOffice Writer",
+        "kind": "native",
+        "windowTitleHint": "LibreOffice Writer"
+      },
+      "action": "click",
+      "target": {
+        "description": "The \"Table\" menu in LibreOffice Writer's menu bar",
+        "text": "Table",
+        "role": "menu",
+        "neighbors": ["Styles", "Form"]
+      },
+      "expectedAfter": "The Table menu is open."
+    },
+    {
+      "id": "s2",
+      "instruction": "Choose \"Insert Table…\".",
+      "app": {
+        "name": "LibreOffice Writer",
+        "kind": "native"
+      },
+      "action": "click",
+      "target": {
+        "description": "The \"Insert Table…\" item at the top of the open Table menu",
+        "text": "Insert Table…",
+        "role": "menu item",
+        "neighbors": ["Insert", "Delete"]
+      },
+      "expectedAfter": "The Insert Table dialog is open."
+    },
+    {
+      "id": "s3",
+      "instruction": "Set Columns to 4.",
+      "app": {
+        "name": "LibreOffice Writer",
+        "kind": "native"
+      },
+      "action": "type",
+      "input": "4",
+      "target": {
+        "description": "The Columns number field in the Insert Table dialog",
+        "text": "Columns",
+        "role": "spin button",
+        "neighbors": ["Rows", "Name"]
+      },
+      "expectedAfter": "Columns shows 4."
+    },
+    {
+      "id": "s4",
+      "instruction": "Make sure \"Header\" is ticked (tick it if it isn't).",
+      "app": {
+        "name": "LibreOffice Writer",
+        "kind": "native"
+      },
+      "action": "click",
+      "target": {
+        "description": "The \"Header\" checkbox under Options in the Insert Table dialog",
+        "text": "Header",
+        "role": "checkbox",
+        "neighbors": [
+          "Repeat header rows on new pages",
+          "Header rows",
+          "Don't split table over pages"
+        ]
+      },
+      "expectedAfter": "Header is ticked."
+    },
+    {
+      "id": "s5",
+      "instruction": "Click Insert.",
+      "app": {
+        "name": "LibreOffice Writer",
+        "kind": "native"
+      },
+      "action": "click",
+      "target": {
+        "description": "The \"Insert\" button at the bottom of the Insert Table dialog",
+        "text": "Insert",
+        "role": "button",
+        "neighbors": ["Cancel", "Help"]
+      },
+      "expectedAfter": "A 4-column table with a header row appears in the document."
+    }
+  ]
+}

@@ -1,4 +1,14 @@
-import { GapKind, Id, ProcedureApp, ProcedureSource, Step, Variable } from '@qhint/schema';
+import {
+  AppCategory,
+  BBox,
+  GapKind,
+  Id,
+  LocalId,
+  ProcedureApp,
+  ProcedureSource,
+  Step,
+  Variable,
+} from '@qhint/schema';
 import {
   authOf,
   createServer,
@@ -9,6 +19,9 @@ import {
   type TokenVerifier,
 } from '@qhint/server-kit';
 import { z } from 'zod';
+import type { ModelGateway } from './gateway/gateway';
+import { locate } from './locate';
+import { verify } from './verify';
 import type { DataPlaneResolver } from './plane';
 import type { StorageProvider } from './storage';
 import type { DataPlaneStore } from './store/store';
@@ -34,8 +47,56 @@ export interface DataDeps {
   verifier: TokenVerifier;
   planes: DataPlaneResolver;
   storage: StorageProvider;
+  gateway: ModelGateway;
   logger?: boolean;
 }
+
+/** Locate requests carry screenshots: allow a bigger body on that route only. */
+export const LOCATE_BODY_LIMIT = 16 * 1024 * 1024;
+const MAX_IMAGE_BASE64 = 4 * 1024 * 1024;
+
+const Jpeg = z
+  .string()
+  .max(MAX_IMAGE_BASE64)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+  .transform((b64) => Buffer.from(b64, 'base64'))
+  .refine((buf) => buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff, {
+    message: 'not a JPEG',
+  });
+
+const Screen = z.object({
+  label: LocalId,
+  width: z.int().min(16).max(4096),
+  height: z.int().min(16).max(4096),
+  jpeg: Jpeg,
+});
+
+const VerifyBody = z.object({
+  step: Step,
+  before: z.array(Screen).min(1).max(4),
+  after: z.array(Screen).min(1).max(4),
+  appCategory: AppCategory.optional(),
+});
+
+const LocateBody = z.object({
+  variant: z.enum(['v1', 'cu']).default('v1'),
+  /** Set when the user pressed "I'm stuck": skip straight to the stronger model. */
+  escalate: z.boolean().default(false),
+  screens: z
+    .array(
+      z.object({
+        label: LocalId,
+        width: z.int().min(16).max(4096),
+        height: z.int().min(16).max(4096),
+        jpeg: Jpeg,
+      }),
+    )
+    .min(1)
+    .max(4),
+  step: Step,
+  exemplar: z.object({ jpeg: Jpeg, bbox: BBox }).optional(),
+  appCategory: AppCategory.optional(),
+});
 
 const ProcedureId = z.object({ id: Id });
 
@@ -159,6 +220,41 @@ export function buildApp(deps: DataDeps) {
     async (req) => {
       if (!(await store.documents.markUploaded(authOf(req), req.params.id))) throw notFound();
       return { status: 'uploaded' as const };
+    },
+  );
+
+  // ---------------------------------------------------------------- locate (screenshots in, box out)
+
+  app.post(
+    '/locate',
+    { onRequest: auth, bodyLimit: LOCATE_BODY_LIMIT, schema: { body: LocateBody } },
+    async (req) => {
+      const ctx = authOf(req);
+      const { screens, step, exemplar, variant, appCategory, escalate } = req.body;
+      // Screenshots live only in this request's memory: never stored, never logged.
+      const outcome = await locate(
+        deps.gateway,
+        { tenantId: ctx.tenantId, userId: ctx.userId, appCategory },
+        { screens, step, ...(exemplar ? { exemplar } : {}) },
+        variant,
+        { escalate },
+      );
+      return outcome;
+    },
+  );
+
+  app.post(
+    '/verify',
+    { onRequest: auth, bodyLimit: LOCATE_BODY_LIMIT, schema: { body: VerifyBody } },
+    async (req) => {
+      const ctx = authOf(req);
+      const { step, before, after, appCategory } = req.body;
+      // Like /locate: screenshots are used for this request only.
+      return verify(
+        deps.gateway,
+        { tenantId: ctx.tenantId, userId: ctx.userId, appCategory },
+        { step, before, after },
+      );
     },
   );
 

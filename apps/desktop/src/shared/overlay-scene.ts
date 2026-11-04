@@ -4,6 +4,8 @@ import type { Point, Rect } from './geometry';
 export interface OverlayScene {
   rings: OverlayRing[];
   card?: OverlayCard;
+  /** What employees see during a guide: pointer + click ring, or a text-field box. */
+  guide?: OverlayGuide;
   /** Display work area in local DIP (excludes taskbar/menu bar); cards stay inside it. */
   workArea: Rect;
   /**
@@ -25,6 +27,19 @@ export interface OverlayCard {
   anchor: Rect;
   title: string;
   body?: string;
+}
+
+export interface OverlayGuide {
+  /** 'done': the step was just completed (green check, no pointer). */
+  kind: 'click' | 'type' | 'done';
+  /** The target element, in local DIP. */
+  rect: Rect;
+  /** For type steps: what to type, shown on the box (e.g. "Type: 4"). */
+  text?: string;
+  /** Where the pointer starts gliding from (local DIP), usually the mouse position. */
+  pointerFrom?: Point;
+  /** Changes for every new target so the pointer animation restarts. */
+  key: string;
 }
 
 export const OVERLAY_SCENE_CHANNEL = 'overlay:scene';

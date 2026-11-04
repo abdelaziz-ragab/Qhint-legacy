@@ -7,6 +7,7 @@ export const IPC = {
   authSignIn: 'auth:sign-in',
   authSignOut: 'auth:sign-out',
   procedures: 'data:procedures',
+  runSample: 'guide:run-sample',
 } as const;
 
 export interface AppInfo {

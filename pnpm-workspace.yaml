@@ -5,7 +5,9 @@ packages:
 allowBuilds:
   '@firebase/util': false
   esbuild: true
+  get-windows: true
   protobufjs: false
+  uiohook-napi: true
 minimumReleaseAgeExclude:
   - '@vitest/mocker@5.1.0'
   - '@vitest/spy@5.1.0'

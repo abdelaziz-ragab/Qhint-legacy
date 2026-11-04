@@ -5,7 +5,10 @@ import type { BrowserWindow } from 'electron';
  * we make them fully transparent for the duration of a capture. On Windows,
  * WDA_EXCLUDEFROMCAPTURE already removes them and this is a no-op.
  */
-export const HIDE_DURING_CAPTURE = process.platform === 'darwin';
+// Measured on macOS 2026-11 (Retina + ultrawide): content protection alone kept every capture
+// clean, and hiding made the guide flicker on each step. Off by default; set QHINT_HIDE_DURING_CAPTURE=1
+// to bring it back if an OS version lets our windows into captures.
+export const HIDE_DURING_CAPTURE = process.env.QHINT_HIDE_DURING_CAPTURE === '1';
 
 /** Time for the window server to composite a frame without our windows. */
 const SETTLE_MS = 80;

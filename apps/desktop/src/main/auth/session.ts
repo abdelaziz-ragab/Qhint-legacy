@@ -72,7 +72,8 @@ export class AuthSession {
     return this.status();
   }
 
-  async signIn(): Promise<SessionStatus> {
+  /** @param onReceived called as soon as the browser hands the tokens back (before loading the profile). */
+  async signIn(onReceived?: () => void): Promise<SessionStatus> {
     this.pending?.close();
     const state = randomBytes(32).toString('base64url');
     const allowedOrigin = new URL(this.controlApiUrl).origin;
@@ -119,6 +120,7 @@ export class AuthSession {
           res.writeHead(204, cors).end();
           clearTimeout(timer);
           server.close();
+          onReceived?.();
           resolve(valid);
         });
       });

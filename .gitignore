@@ -31,3 +31,6 @@ infra/**/*.tfvars
 # service build output
 services/*/dist/
 infra/**/backend.hcl
+
+# native helper build output
+apps/desktop/native/bin/

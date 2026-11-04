@@ -33,6 +33,8 @@ export interface CaptureOptions {
   /** JPEG quality 0-100. */
   quality?: number;
   keepBitmap?: boolean;
+  /** Only these displays (e.g. the one the guided app is on). Default: all. */
+  displayIds?: number[];
 }
 
 export function toGeometry(d: Display): DisplayGeometry {
@@ -49,7 +51,9 @@ export async function captureDisplays(opts: CaptureOptions = {}): Promise<Captur
   const quality = opts.quality ?? 80;
 
   const cursor = screen.getCursorScreenPoint();
-  const displays = orderDisplaysCursorFirst(currentDisplays(), cursor);
+  const all = currentDisplays();
+  const wanted = opts.displayIds?.length ? all.filter((d) => opts.displayIds!.includes(d.id)) : all;
+  const displays = orderDisplaysCursorFirst(wanted.length ? wanted : all, cursor);
   const plans = new Map(displays.map((d) => [d.id, planCapture(d, longSide)]));
   // Thumbnails are scaled to fit inside this square, keeping aspect; big enough for every plan.
   const box = Math.max(...[...plans.values()].map((p) => Math.max(p.full.width, p.full.height)));

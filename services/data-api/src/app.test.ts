@@ -1,6 +1,9 @@
 import { type TokenVerifier, unauthenticated, type VerifiedToken } from '@qhint/server-kit';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from './app';
+import { defaultGatewayConfig } from './gateway/config';
+import { FakeModelProvider } from './gateway/fake-provider';
+import { ModelGateway } from './gateway/gateway';
 import type { DataPlaneResolver } from './plane';
 import type { StorageProvider } from './storage';
 import type { DataPlaneStore, TenantContext } from './store/store';
@@ -91,7 +94,19 @@ function harness() {
       throw new Error('unused');
     },
   };
-  return { app: buildApp({ store, verifier, planes, storage }), seen, uploads };
+  const provider = new FakeModelProvider(() =>
+    JSON.stringify({
+      kind: 'found',
+      screen: 'screen_1',
+      bbox: [10, 10, 60, 30],
+      confidence: 'high',
+      label: 'Insert',
+      reason: null,
+      hint: null,
+    }),
+  );
+  const gateway = new ModelGateway(provider, defaultGatewayConfig('k'.repeat(32)), () => {});
+  return { app: buildApp({ store, verifier, planes, storage, gateway }), seen, uploads, provider };
 }
 
 const as = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -108,6 +123,7 @@ describe('data-api', () => {
     ['POST', `/uploads/${DOC}/complete`],
     ['GET', '/gaps'],
     ['POST', '/gaps'],
+    ['POST', '/locate'],
   ])('%s %s requires sign-in', async (method, url) => {
     const { app } = harness();
     const res = await app.inject({
@@ -232,5 +248,116 @@ describe('data-api', () => {
       headers: as('employee'),
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('/locate', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]).toString('base64');
+  const body = (over: Record<string, unknown> = {}) => ({
+    screens: [{ label: 'screen_1', width: 1280, height: 720, jpeg }],
+    step: {
+      id: 's5',
+      instruction: 'Click Insert',
+      app: { name: 'LibreOffice Writer', kind: 'native' },
+      action: 'click',
+      target: { description: 'Insert button' },
+    },
+    ...over,
+  });
+
+  it('returns the gateway result for a signed-in user', async () => {
+    const { app, provider } = harness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/locate',
+      headers: as('employee'),
+      payload: body(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      result: { kind: 'found', screen: 'screen_1', bbox: [10, 10, 60, 30] },
+      escalated: false,
+    });
+    // The image actually reached the model as a JPEG part.
+    const parts = provider.calls[0]!.request.content;
+    expect(parts.some((p) => p.type === 'image')).toBe(true);
+  });
+
+  it.each([
+    [
+      'a non-JPEG image',
+      body({
+        screens: [
+          {
+            label: 'screen_1',
+            width: 1280,
+            height: 720,
+            jpeg: Buffer.from('<svg/>').toString('base64'),
+          },
+        ],
+      }),
+    ],
+    [
+      'too many screens',
+      body({
+        screens: Array.from({ length: 5 }, (_, i) => ({
+          label: `screen_${i + 1}`,
+          width: 100,
+          height: 100,
+          jpeg,
+        })),
+      }),
+    ],
+    [
+      'an absurd size',
+      body({ screens: [{ label: 'screen_1', width: 100000, height: 720, jpeg }] }),
+    ],
+    ['a bad label', body({ screens: [{ label: '../x', width: 1280, height: 720, jpeg }] })],
+  ])('rejects %s without calling the model', async (_name, payload) => {
+    const { app, provider } = harness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/locate',
+      headers: as('employee'),
+      payload,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(provider.calls).toHaveLength(0);
+  });
+});
+
+describe('/verify', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]).toString('base64');
+  const screens = [{ label: 'screen_1', width: 1280, height: 720, jpeg }];
+  const body = {
+    step: {
+      id: 's1',
+      instruction: 'Open the Table menu.',
+      app: { name: 'LibreOffice Writer', kind: 'native' },
+      action: 'click',
+      target: { description: 'Table menu' },
+      expectedAfter: 'The Table menu is open.',
+    },
+    before: screens,
+    after: screens,
+  };
+
+  it('requires sign-in', async () => {
+    const { app } = harness();
+    expect((await app.inject({ method: 'POST', url: '/verify', payload: body })).statusCode).toBe(
+      401,
+    );
+  });
+
+  it('answers not_done when the model output is unusable (never assumes success)', async () => {
+    const { app } = harness(); // the harness model answers with a locate result, not a verify result
+    const res = await app.inject({
+      method: 'POST',
+      url: '/verify',
+      headers: as('employee'),
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result).toEqual({ status: 'not_done', explanation: '' });
   });
 });
