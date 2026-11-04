@@ -10,6 +10,7 @@
     "dev": "pnpm infra:up && pnpm db:setup && pnpm -r --parallel dev",
     "dev:desktop": "pnpm --filter @qhint/desktop dev",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -20,12 +21,15 @@
     "infra:reset": "docker compose down -v",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
-    "db:setup": "pnpm db:migrate && pnpm db:seed"
+    "db:setup": "pnpm db:migrate && pnpm db:seed",
+    "build:services": "node scripts/build-service.mjs control-api && node scripts/build-service.mjs data-api"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@qhint/server-kit": "workspace:*",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
+    "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",

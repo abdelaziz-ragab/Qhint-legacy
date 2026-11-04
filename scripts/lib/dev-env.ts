@@ -5,6 +5,11 @@ export const DEV = {
   authEmulatorHost: process.env.FIREBASE_AUTH_EMULATOR_HOST ?? '127.0.0.1:9099',
   storageEmulatorHost: process.env.STORAGE_EMULATOR_HOST ?? 'http://127.0.0.1:4443',
   contentBucket: process.env.CONTENT_BUCKET ?? 'qhint-dev-content',
+  /** Local-only passwords for the two application roles (set by `pnpm db:migrate`). */
+  rolePasswords: {
+    qhint_control_app: process.env.DEV_CONTROL_DB_PASSWORD ?? 'qhint_control_dev',
+    qhint_data_app: process.env.DEV_DATA_DB_PASSWORD ?? 'qhint_data_dev',
+  },
 };
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);

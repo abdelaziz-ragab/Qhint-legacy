@@ -1,0 +1,25 @@
+{
+  "name": "@qhint/server-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@qhint/schema": "workspace:*",
+    "fastify": "^5.12.8",
+    "fastify-type-provider-zod": "^7.0.0",
+    "firebase-admin": "^14.5.0",
+    "google-auth-library": "^11.3.3",
+    "kysely": "^0.29.8",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

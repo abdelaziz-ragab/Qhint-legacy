@@ -59,6 +59,13 @@ async function main() {
       }
       if (pending.length === 0) console.log(`migrate: ${track} up to date`);
     }
+
+    // Local only: give the application roles their dev passwords so the services can connect.
+    for (const [role, password] of Object.entries(DEV.rolePasswords)) {
+      await client.query(
+        `ALTER ROLE ${client.escapeIdentifier(role)} PASSWORD ${client.escapeLiteral(password)}`,
+      );
+    }
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => {});
     await client.end();
