@@ -1,8 +1,9 @@
 /**
  * Talks to the native accessibility helper (a small separate process, one JSON line per message).
- * macOS only for now; elsewhere every call answers null and the guide uses screenshots.
+ * macOS (Swift, AX API) and Windows (C#, UI Automation); elsewhere every call answers null and
+ * the guide uses screenshots.
  */
-import { app } from 'electron';
+import { app, screen } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,10 +13,16 @@ import { AxElementsResponse, type AxElement } from './types';
 const TIMEOUT_MS = 1500;
 
 function helperPath(): string | null {
-  if (process.platform !== 'darwin') return null;
+  const file =
+    process.platform === 'darwin'
+      ? 'qhint-ax'
+      : process.platform === 'win32'
+        ? 'qhint-ax.exe'
+        : null;
+  if (!file) return null;
   const p = app.isPackaged
-    ? join(process.resourcesPath, 'qhint-ax')
-    : join(app.getAppPath(), 'native/bin/qhint-ax');
+    ? join(process.resourcesPath, file)
+    : join(app.getAppPath(), 'native/bin', file);
   return existsSync(p) ? p : null;
 }
 
@@ -35,7 +42,14 @@ export class AxHelper {
   async elements(pid: number): Promise<AxElement[] | null> {
     const res = await this.request({ cmd: 'elements', pid });
     const parsed = AxElementsResponse.safeParse(res);
-    return parsed.success ? parsed.data.elements : null;
+    if (!parsed.success) return null;
+    // Windows reports physical pixels: convert to DIP (Electron's coordinates), per display.
+    if (parsed.data.units !== 'physical' || process.platform !== 'win32')
+      return parsed.data.elements;
+    return parsed.data.elements.map((e) => {
+      const r = screen.screenToDipRect(null, { x: e.x, y: e.y, width: e.w, height: e.h });
+      return { ...e, x: r.x, y: r.y, w: r.width, h: r.height };
+    });
   }
 
   /** Process id of the app in front (menus and dialogs included); null if unavailable. */
@@ -55,7 +69,7 @@ export class AxHelper {
   private ensure(): ChildProcessWithoutNullStreams | null {
     if (this.proc) return this.proc;
     if (!this.path) return null;
-    const proc = spawn(this.path, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn(this.path, [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     createInterface({ input: proc.stdout }).on('line', (line) => {
       let msg: { id?: unknown };
       try {

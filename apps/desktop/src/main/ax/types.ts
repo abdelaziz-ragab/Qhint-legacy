@@ -28,4 +28,6 @@ export const AxElementsResponse = z.object({
   ok: z.literal(true),
   elements: z.array(AxElement).max(5000),
   truncated: z.boolean(),
+  /** Windows: frames are physical pixels (converted to DIP by the caller). */
+  units: z.enum(['dip', 'physical']).optional(),
 });
