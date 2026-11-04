@@ -44,6 +44,11 @@ export const DEFAULT_LONG_SIDE = 1280;
 /** Displays more elongated than this (e.g. 32:9 or 21:9 ultrawides) are split into tiles. */
 export const TILE_ASPECT_LIMIT = 2;
 const TILE_TARGET_ASPECT = 16 / 9;
+/**
+ * DIP sizes are rounded to whole points, so a 32:9 display can come out a hair over two 16:9
+ * widths (e.g. 2276x640 = 2.0004). Ignore overshoot this small instead of adding a sliver tile.
+ */
+const TILE_COUNT_TOLERANCE = 0.05;
 
 /** Physical pixel size of a display. */
 export function physicalSize(d: DisplayGeometry): Size {
@@ -91,7 +96,10 @@ export function planCapture(d: DisplayGeometry, longSide = DEFAULT_LONG_SIDE): C
   const vertical = 1 / aspect > TILE_ASPECT_LIMIT;
   const count =
     horizontal || vertical
-      ? Math.max(2, Math.ceil((horizontal ? aspect : 1 / aspect) / TILE_TARGET_ASPECT - 1e-6))
+      ? Math.max(
+          2,
+          Math.ceil((horizontal ? aspect : 1 / aspect) / TILE_TARGET_ASPECT - TILE_COUNT_TOLERANCE),
+        )
       : 1;
 
   const regionW = horizontal ? width / count : width;

@@ -99,6 +99,19 @@ describe('planCapture: elongated displays (tiles)', () => {
     expect(plan.tiles.map((t) => t.crop.x)).toEqual([0, 1280]);
   });
 
+  it.each([
+    ['5120x1440 @150% (3413x960)', 3413, 960, 1.5],
+    ['5120x1440 @175% (2926x823)', 2926, 823, 1.75],
+    ['5120x1440 @225% rounded up (2276x640)', 2276, 640, 2.25],
+    ['5120x1440 @125% (4096x1152)', 4096, 1152, 1.25],
+  ])('rounded 32:9 sizes still give exactly two tiles: %s', (_name, w, h, scale) => {
+    expect(planCapture(display(20, 0, 0, w, h, scale)).tiles).toHaveLength(2);
+  });
+
+  it('gives three tiles to a genuinely wider display (48:9)', () => {
+    expect(planCapture(display(21, 0, 0, 7680, 1440, 1)).tiles).toHaveLength(3);
+  });
+
   it('splits a 21:9 display into two tiles', () => {
     const plan = planCapture(ultrawide);
     expect(plan.tiles).toHaveLength(2);
