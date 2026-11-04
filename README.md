@@ -40,21 +40,23 @@ Pull and rerun `pnpm dev:desktop` to test new changes. Manual test steps: `apps/
 
 ## Commands
 
-| Command            | What it does                                                        |
-| ------------------ | ------------------------------------------------------------------- |
-| `pnpm dev`         | Everything: infra up, migrate, seed, APIs + desktop app with reload |
-| `pnpm dev:desktop` | Desktop app only (no Docker; use this on the Windows test VMs)      |
-| `pnpm test`        | All unit tests (Vitest)                                             |
-| `pnpm test:watch`  | Tests in watch mode                                                 |
-| `pnpm typecheck`   | TypeScript across all packages                                      |
-| `pnpm lint`        | ESLint                                                              |
-| `pnpm format`      | Prettier (write)                                                    |
-| `pnpm infra:up`    | Start Docker services and wait until healthy                        |
-| `pnpm infra:down`  | Stop Docker services (data kept)                                    |
-| `pnpm infra:reset` | Stop Docker services and delete their data                          |
-| `pnpm db:migrate`  | Apply SQL migrations (`db/migrations/<track>/`)                     |
-| `pnpm db:seed`     | Seed the dev tenant and users (idempotent)                          |
-| `pnpm db:setup`    | Migrate + seed                                                      |
+| Command               | What it does                                                            |
+| --------------------- | ----------------------------------------------------------------------- |
+| `pnpm dev`            | Everything: infra up, migrate, seed, APIs + desktop app with reload     |
+| `pnpm dev:desktop`    | Desktop app only (no Docker; use this on the Windows test VMs)          |
+| `pnpm test`           | All unit tests (Vitest; no Docker needed)                               |
+| `pnpm test:db`        | Database + API isolation tests (needs `pnpm infra:up && pnpm db:setup`) |
+| `pnpm test:watch`     | Tests in watch mode                                                     |
+| `pnpm typecheck`      | TypeScript across all packages                                          |
+| `pnpm lint`           | ESLint                                                                  |
+| `pnpm format`         | Prettier (write)                                                        |
+| `pnpm infra:up`       | Start Docker services and wait until healthy                            |
+| `pnpm infra:down`     | Stop Docker services (data kept)                                        |
+| `pnpm infra:reset`    | Stop Docker services and delete their data                              |
+| `pnpm db:migrate`     | Apply SQL migrations (`db/migrations/<track>/`)                         |
+| `pnpm db:seed`        | Seed the dev tenant and users (idempotent)                              |
+| `pnpm db:setup`       | Migrate + seed                                                          |
+| `pnpm build:services` | Bundle control-api and data-api into `services/*/dist`                  |
 
 Dev-only: `QHINT_DEBUG_PORT=9222 pnpm dev:desktop` exposes Chrome DevTools Protocol on
 `127.0.0.1:9222` for inspecting the app's windows.
@@ -63,7 +65,7 @@ Dev-only: `QHINT_DEBUG_PORT=9222 pnpm dev:desktop` exposes Chrome DevTools Proto
 
 | Service             | Address               | Notes                                    |
 | ------------------- | --------------------- | ---------------------------------------- |
-| control-api         | http://127.0.0.1:8081 | `GET /healthz`                           |
+| control-api         | http://127.0.0.1:8081 | sign-in page at `/login`, `GET /healthz` |
 | data-api            | http://127.0.0.1:8082 | `GET /healthz`                           |
 | Postgres + pgvector | 127.0.0.1:5432        | db `qhint`, user `qhint`, pw `qhint_dev` |
 | Firebase Auth emu.  | 127.0.0.1:9099        | project `demo-qhint` (never hits Google) |
@@ -71,17 +73,27 @@ Dev-only: `QHINT_DEBUG_PORT=9222 pnpm dev:desktop` exposes Chrome DevTools Proto
 
 All ports bind to loopback only.
 
+Service settings for local development live in `.env.development` (committed; local emulator
+values only). Put anything real in `.env` (gitignored).
+
 ### Dev accounts (emulator only)
 
-Tenant **Acme (dev)** (`00000000-0000-4000-8000-000000000001`), one Identity Platform tenant:
+Two tenants, each its own Identity Platform tenant. Password for all: `qhint-dev-only`.
 
-| Email                | Role     | Password         |
-| -------------------- | -------- | ---------------- |
-| `admin@acme.test`    | admin    | `qhint-dev-only` |
-| `employee@acme.test` | employee | `qhint-dev-only` |
+| Tenant       | Admin               | Employee               |
+| ------------ | ------------------- | ---------------------- |
+| Acme (dev)   | `admin@acme.test`   | `employee@acme.test`   |
+| Globex (dev) | `admin@globex.test` | `employee@globex.test` |
 
-Tokens carry custom claims `tenantId` and `role`. Seed scripts refuse to run against
-anything that isn't localhost.
+Signing in from the desktop app opens the sign-in page in your browser. Enter one of the emails
+above and the password. **Continue with Google** needs no email typed first: in the emulator's fake
+Google window, pick or add an account with email `google.user@acme.test` (or
+`google.user@globex.test`). Those are invited but have never signed in, so control-api links the
+account on first sign-in. **SSO** shows "not set up" (no dev tenant has one) and **Microsoft** is
+"coming soon". Emails that aren't invited are refused: they never get access.
+
+Tokens carry custom claims `tenantId`, `userId` and `role`, set by control-api. Seed scripts
+refuse to run against anything that isn't localhost.
 
 ## Repository layout
 
@@ -96,7 +108,8 @@ packages/eval/         Eval fixtures + scoring CLI
 db/migrations/         Plain SQL migrations, one track per plane (control, content)
 docker/                Local-dev container images
 infra/                 Terraform (GCP)
-scripts/               Dev scripts (migrate, seed)
+scripts/               Dev scripts (migrate, seed, service bundler) and end-to-end tests
+packages/server-kit/   Shared server code: auth, logging, errors, config, db
 ```
 
 Internal packages are consumed as TypeScript source (no build step in development).

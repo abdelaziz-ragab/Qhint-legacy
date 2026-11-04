@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+project_id = "qhint-dev-1ff9"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# After the first image push (see README):
+# control_api_image = "us-central1-docker.pkg.dev/qhint-dev-1ff9/qhint/control-api:<git-sha>"
+# data_api_image    = "us-central1-docker.pkg.dev/qhint-dev-1ff9/qhint/data-api:<git-sha>"
+
+# Google sign-in OAuth client (console: APIs & Services > Credentials > OAuth client ID, "Web").
+google_oauth_client_id     = ""
+google_oauth_client_secret = ""
+
+tenants = { demo = "demo" }

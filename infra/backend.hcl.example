@@ -1,0 +1,3 @@
+# terraform init -backend-config=backend.hcl
+bucket = "qhint-dev-1ff9-tfstate"
+prefix = "qhint/dev"

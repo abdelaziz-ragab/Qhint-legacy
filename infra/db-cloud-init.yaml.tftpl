@@ -1,0 +1,88 @@
+#cloud-config
+# Runs on every boot of the Container-Optimized OS VM. Data lives on the persistent stateful
+# partition; the owner password is read from Secret Manager at start-up, never baked in.
+write_files:
+  - path: /etc/systemd/system/qhint-postgres.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Qhint Postgres
+      Wants=network-online.target docker.service
+      After=network-online.target docker.service
+
+      [Service]
+      Environment=HOME=/home/qhint
+      ExecStartPre=/bin/mkdir -p /home/qhint /mnt/stateful_partition/qhint/pgdata /mnt/stateful_partition/qhint/secrets
+      ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
+      ExecStartPre=/bin/bash /etc/qhint/fetch-password.sh
+      ExecStartPre=-/usr/bin/docker rm -f qhint-pg
+      ExecStart=/usr/bin/docker run --name qhint-pg --rm \
+        -p ${listen_ip}:5432:5432 \
+        -v /mnt/stateful_partition/qhint/pgdata:/var/lib/postgresql/data \
+        -v /mnt/stateful_partition/qhint/secrets:/run/qhint:ro \
+        -e POSTGRES_USER=qhint -e POSTGRES_DB=qhint \
+        -e POSTGRES_PASSWORD_FILE=/run/qhint/db-owner-password \
+        --shm-size=128m \
+        ${image} \
+        -c shared_buffers=128MB -c max_connections=40 -c password_encryption=scram-sha-256
+      ExecStop=/usr/bin/docker stop qhint-pg
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/qhint/fetch-password.sh
+    permissions: "0700"
+    content: |
+      set -euo pipefail
+      token=$(curl -sf -H 'Metadata-Flavor: Google' \
+        'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
+        | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+      curl -sf -H "Authorization: Bearer $token" \
+        'https://secretmanager.googleapis.com/v1/${password_secret}:access' \
+        | sed -E 's/.*"data":"([^"]+)".*/\1/' | base64 -d \
+        > /mnt/stateful_partition/qhint/secrets/db-owner-password
+      chown 999:999 /mnt/stateful_partition/qhint/secrets/db-owner-password
+      chmod 0400 /mnt/stateful_partition/qhint/secrets/db-owner-password
+
+  - path: /etc/qhint/backup.sh
+    permissions: "0700"
+    content: |
+      set -euo pipefail
+      out=/mnt/stateful_partition/qhint/backup.dump
+      docker exec qhint-pg pg_dump -U qhint -Fc qhint > "$out"
+      token=$(curl -sf -H 'Metadata-Flavor: Google' \
+        'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
+        | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+      name="db/qhint-$(date -u +%Y%m%dT%H%M%SZ).dump"
+      curl -sf -X POST -H "Authorization: Bearer $token" -H 'Content-Type: application/octet-stream' \
+        --data-binary @"$out" \
+        "https://storage.googleapis.com/upload/storage/v1/b/${backup_bucket}/o?uploadType=media&name=$name" > /dev/null
+      rm -f "$out"
+
+  - path: /etc/systemd/system/qhint-backup.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Qhint nightly database backup
+      Requires=qhint-postgres.service
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash /etc/qhint/backup.sh
+
+  - path: /etc/systemd/system/qhint-backup.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run the Qhint database backup nightly
+      [Timer]
+      OnCalendar=*-*-* 03:00:00 UTC
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl start qhint-postgres.service
+  - systemctl start qhint-backup.timer

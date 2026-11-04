@@ -11,6 +11,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!.env.development
 *.pem
 *.key
 service-account*.json
@@ -26,3 +27,7 @@ infra/**/*.tfstate
 infra/**/*.tfstate.*
 infra/**/*.tfvars
 !infra/**/*.tfvars.example
+
+# service build output
+services/*/dist/
+infra/**/backend.hcl

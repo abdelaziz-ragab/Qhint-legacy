@@ -24,6 +24,10 @@ export default tseslint.config(
     },
   },
   {
+    files: ['services/control-api/login/**/*.js'],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+  {
     files: ['apps/desktop/src/renderer/**/*.{ts,tsx}'],
     languageOptions: {
       globals: { ...globals.browser },
