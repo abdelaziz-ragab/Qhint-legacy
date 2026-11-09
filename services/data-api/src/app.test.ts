@@ -13,6 +13,7 @@ const GLOBEX = '00000000-0000-4000-8000-000000000002';
 const EMP = '00000000-0000-4000-8000-000000000101';
 const ADMIN = '00000000-0000-4000-8000-000000000102';
 const DOC = '00000000-0000-4000-8000-00000000d0c1';
+const JOB = '00000000-0000-4000-8000-00000000j0b1'.replace('j', 'a');
 
 const tok = (userId: string, role: 'employee' | 'admin', idp = 'idp-acme'): VerifiedToken => ({
   firebaseUid: `fb-${userId}`,
@@ -43,6 +44,11 @@ function harness() {
       ),
       submitForReview: record('submit') as never,
       publish: record('publish') as never,
+      update: async (ctx, id, edit) => (
+        seen.push({ method: 'update', ctx, arg: { id, edit } }),
+        id === DOC ? null : ({ id } as never)
+      ),
+      remove: async (ctx, id) => (seen.push({ method: 'remove', ctx, arg: id }), id !== DOC),
     },
     documents: {
       create: async (ctx, input) => {
@@ -55,8 +61,27 @@ function harness() {
       },
       get: async () => null,
       markUploaded: record('uploaded') as never,
+      setStatus: async () => {},
+      markSourceDeleted: async () => {},
     },
     gaps: { create: async () => ({}) as never, list: async () => [] },
+    ingest: {
+      create: async (ctx, input) => {
+        seen.push({ method: 'ingest', ctx, arg: input });
+        return input.documentId === DOC ? ({ id: 'job-1', status: 'queued' } as never) : null;
+      },
+      get: async (_ctx, id) =>
+        id === JOB
+          ? ({ id: JOB, status: 'done', stage: 'done', progress: 100, procedureId: 'p' } as never)
+          : null,
+      list: async () => [],
+      progress: async () => {},
+      finish: async () => {},
+      fail: async () => {},
+      release: async () => {},
+      report: async () => ({ flagged: [] }),
+      claim: async () => null,
+    },
   };
   const verifier: TokenVerifier = {
     async verify(t) {
@@ -93,6 +118,10 @@ function harness() {
     async downloadUrl() {
       throw new Error('unused');
     },
+    read: async () => Buffer.alloc(0),
+    write: async () => {},
+    remove: async () => {},
+    size: async () => null,
   };
   const provider = new FakeModelProvider(() =>
     JSON.stringify({
@@ -359,5 +388,100 @@ describe('/verify', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().result).toEqual({ status: 'not_done', explanation: '' });
+  });
+});
+
+describe('/ingest and editing drafts', () => {
+  const as = (token: string) => ({ authorization: `Bearer ${token}` });
+
+  it('queues a job for an uploaded document, scoped to the caller', async () => {
+    const { app, seen } = harness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/ingest',
+      headers: as('employee'),
+      payload: { documentId: DOC, language: 'ta-IN', tenantId: GLOBEX },
+    });
+    expect(res.statusCode).toBe(201);
+    const call = seen.find((s) => s.method === 'ingest')!;
+    expect(call.ctx.tenantId).toBe(ACME);
+    expect(call.arg).toEqual({ documentId: DOC, language: 'ta-IN' });
+  });
+
+  it('refuses documents that are not ready (or not the caller’s) with 409', async () => {
+    const { app } = harness();
+    const other = '00000000-0000-4000-8000-0000000000ff';
+    const res = await app.inject({
+      method: 'POST',
+      url: '/ingest',
+      headers: as('employee'),
+      payload: { documentId: other },
+    });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('rejects malformed languages', async () => {
+    const { app } = harness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/ingest',
+      headers: as('employee'),
+      payload: { documentId: DOC, language: 'en_US; drop' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('shows job status with the review report once done', async () => {
+    const { app } = harness();
+    const res = await app.inject({ method: 'GET', url: `/ingest/${JOB}`, headers: as('employee') });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: 'done', procedureId: 'p', report: { flagged: [] } });
+    const missing = await app.inject({
+      method: 'GET',
+      url: `/ingest/${DOC}`,
+      headers: as('employee'),
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it('edits and deletes drafts through the store (404 when not the caller’s draft)', async () => {
+    const { app, seen } = harness();
+    const id = '00000000-0000-4000-8000-0000000000aa';
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: `/procedures/${id}`,
+      headers: as('employee'),
+      payload: { title: 'New title' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(seen.find((s) => s.method === 'update')?.arg).toEqual({
+      id,
+      edit: { title: 'New title' },
+    });
+    const notMine = await app.inject({
+      method: 'PATCH',
+      url: `/procedures/${DOC}`,
+      headers: as('employee'),
+      payload: { title: 'x' },
+    });
+    expect(notMine.statusCode).toBe(404);
+    const empty = await app.inject({
+      method: 'PATCH',
+      url: `/procedures/${id}`,
+      headers: as('employee'),
+      payload: {},
+    });
+    expect(empty.statusCode).toBe(400);
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/procedures/${id}`,
+      headers: as('employee'),
+    });
+    expect(del.statusCode).toBe(204);
+  });
+
+  it('requires sign-in', async () => {
+    const { app } = harness();
+    expect((await app.inject({ method: 'GET', url: '/ingest' })).statusCode).toBe(401);
   });
 });

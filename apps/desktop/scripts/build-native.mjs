@@ -25,6 +25,8 @@ if (process.platform === 'darwin') {
       'AppKit',
       '-framework',
       'ApplicationServices',
+      '-framework',
+      'ScreenCaptureKit',
     ],
     { stdio: 'inherit' },
   );

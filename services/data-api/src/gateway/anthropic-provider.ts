@@ -1,6 +1,33 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ModelProvider, ModelRequest, ProviderResponse } from './types';
 
+type Part = ModelRequest['content'][number];
+
+/** Map a provider-neutral part to an Anthropic content block (with its cache marker). */
+function toBlock(part: Part): Anthropic.Messages.ContentBlockParam {
+  const cache = part.cache ? { cache_control: { type: 'ephemeral' as const } } : {};
+  switch (part.type) {
+    case 'text':
+      return { type: 'text', text: part.text, ...cache };
+    case 'image':
+      return {
+        type: 'image',
+        source: { type: 'base64', media_type: part.mediaType, data: part.data.toString('base64') },
+        ...cache,
+      };
+    case 'document':
+      return {
+        type: 'document',
+        source:
+          part.mediaType === 'application/pdf'
+            ? { type: 'base64', media_type: 'application/pdf', data: part.data.toString('base64') }
+            : { type: 'text', media_type: 'text/plain', data: part.data.toString('utf8') },
+        ...(part.title ? { title: part.title } : {}),
+        ...cache,
+      };
+  }
+}
+
 /** Anthropic API provider. The API key lives only in the backend (env / Secret Manager). */
 export class AnthropicProvider implements ModelProvider {
   readonly name = 'anthropic';
@@ -11,31 +38,23 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   async complete(model: string, req: ModelRequest): Promise<ProviderResponse> {
-    const content: Anthropic.Messages.ContentBlockParam[] = req.content.map((part) =>
-      part.type === 'text'
-        ? { type: 'text', text: part.text }
-        : {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: part.mediaType,
-              data: part.data.toString('base64'),
-            },
-          },
-    );
-    const res = await this.client.messages.create({
-      model,
-      max_tokens: req.maxTokens,
-      system: req.system,
-      messages: [{ role: 'user', content }],
-      output_config: {
-        ...(req.effort ? { effort: req.effort } : {}),
-        ...(req.outputSchema
-          ? { format: { type: 'json_schema' as const, schema: req.outputSchema } }
-          : {}),
+    const content = req.content.map(toBlock);
+    const res = await this.client.messages.create(
+      {
+        model,
+        max_tokens: req.maxTokens,
+        system: req.system,
+        messages: [{ role: 'user', content }],
+        output_config: {
+          ...(req.effort ? { effort: req.effort } : {}),
+          ...(req.outputSchema
+            ? { format: { type: 'json_schema' as const, schema: req.outputSchema } }
+            : {}),
+        },
+        ...(req.tools ? { tools: req.tools as Anthropic.Messages.ToolUnion[] } : {}),
       },
-      ...(req.tools ? { tools: req.tools as Anthropic.Messages.ToolUnion[] } : {}),
-    });
+      req.timeoutMs ? { timeout: req.timeoutMs } : undefined,
+    );
 
     let text = '';
     const toolCalls: ProviderResponse['toolCalls'] = [];

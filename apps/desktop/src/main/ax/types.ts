@@ -11,6 +11,8 @@ export const AxElement = z.object({
   label: z.string().max(200).optional(),
   /** Current value: checkbox state ("0"/"1"), field contents. Never sent anywhere. */
   value: z.string().max(200).optional(),
+  /** Web pages (AXWebArea): the address the page is on. Never sent anywhere. */
+  url: z.string().max(500).optional(),
   enabled: z.boolean().optional(),
   focused: z.boolean().optional(),
   /** Global DIP rect (top-left of the primary display), same space as Electron's screen API. */

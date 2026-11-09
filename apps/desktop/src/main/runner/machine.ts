@@ -72,6 +72,10 @@ export type RunnerEvent =
       result: Extract<LocateResult, { kind: 'found' }>;
       notice?: RunnerState['notice'];
     }
+  /** Live tracking: go to this step and show it the usual way (it can't be followed live). */
+  | { type: 'GOTO'; stepIndex: number }
+  /** The step is the user's own choice (e.g. which file): show it as text and wait. */
+  | { type: 'USER_CHOICE'; token: number; hint: string }
   /** Live tracking: nothing from the guide is on screen right now. */
   | { type: 'LOST'; hint: string }
   /** Live tracking: the last step was done. `missed` lists steps left undone on the way. */
@@ -316,6 +320,14 @@ export function reduce(s: RunnerState, e: RunnerEvent): Transition {
       };
     }
 
+    case 'GOTO': {
+      if (!active || s.phase === 'VERIFYING') return none;
+      if (e.stepIndex < 0 || e.stepIndex >= s.procedure!.steps.length) return none;
+      const outcomes: StepOutcome[] = s.outcomes.slice(0, e.stepIndex);
+      for (let i = 0; i < e.stepIndex; i++) outcomes[i] ??= 'done';
+      return enterStep({ ...s, outcomes }, e.stepIndex);
+    }
+
     case 'LOST': {
       if (!active || s.phase === 'VERIFYING') return none;
       return {
@@ -340,6 +352,19 @@ export function reduce(s: RunnerState, e: RunnerEvent): Transition {
             state: { ...done.state, notice: { kind: 'missed', hint: e.missed.join(' ') } },
           }
         : done;
+    }
+
+    case 'USER_CHOICE': {
+      if (!awaitingLocate(s, e.token)) return none;
+      return {
+        state: {
+          ...s,
+          phase: 'TEXT_ONLY',
+          found: null,
+          notice: { kind: 'no_target', hint: e.hint },
+        },
+        effects: [{ type: 'clear' }, { type: 'show' }],
+      };
     }
 
     case 'LOCATE_FAILED': {

@@ -14,8 +14,9 @@ import {
   type PanelView,
 } from '../../shared/panel';
 import { placeCard } from '../../shared/placement';
+import { canShowToScreenSharing } from '../ax/helper';
 
-export const PANEL_SIZE = { width: 380, height: 196 };
+export const PANEL_SIZE = { width: 400, height: 250 };
 const MARGIN = 24;
 
 export class PanelWindow {
@@ -97,7 +98,8 @@ export class PanelWindow {
         nodeIntegration: false,
       },
     });
-    win.setContentProtection(true);
+    // Hidden from screen captures unless Qhint's own screenshots can leave it out (macOS).
+    win.setContentProtection(!canShowToScreenSharing());
     // Above the overlay windows (same level, one step higher).
     win.setAlwaysOnTop(true, 'screen-saver', 1);
     win.setVisibleOnAllWorkspaces(true, {

@@ -9,8 +9,10 @@ export interface PanelView {
   /** Overrides "Step N of M" (e.g. "Before we start" while opening the app). */
   progressLabel?: string;
   instruction: string;
-  /** For type steps: the text to type. */
+  /** For type and "go to" steps: the text (or address) to type. */
   typeText?: string;
+  /** What the user should see once the step is done. */
+  expected?: string;
   appName: string;
   notice: { kind: NoticeKind; hint: string } | null;
   canGoBack: boolean;

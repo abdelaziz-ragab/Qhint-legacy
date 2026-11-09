@@ -7,7 +7,7 @@ export type { ContentPart } from '@qhint/prompts';
 /** What the gateway sends to a provider: a built prompt. */
 export type ModelRequest = Pick<
   PromptRequest,
-  'system' | 'content' | 'maxTokens' | 'outputSchema' | 'tools' | 'effort'
+  'system' | 'content' | 'maxTokens' | 'outputSchema' | 'tools' | 'effort' | 'timeoutMs'
 > &
   Partial<Pick<PromptRequest, 'promptId'>>;
 

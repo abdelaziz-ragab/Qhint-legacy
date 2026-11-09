@@ -13,10 +13,16 @@ import { screen } from 'electron';
 import type { Point, Rect } from '../../shared/geometry';
 import type { PanelAction, PanelView } from '../../shared/panel';
 import type { AppPresence } from '../apps/presence';
-import { assessProgress, skippedBefore, type Progress } from '../ax/progress';
+import { assessProgress, baselineOf, skippedBefore, type Progress } from '../ax/progress';
 import type { AxElement } from '../ax/types';
 import type { DisplayCapture } from '../capture/capture';
-import { frameContains, globalToImageBBox, localWorkArea } from '../coords/coords';
+import {
+  frameContains,
+  globalToImageBBox,
+  globalToLocal,
+  localWorkArea,
+  type DisplayGeometry,
+} from '../coords/coords';
 import { clickHits } from '../input/coords';
 import type { InputWatcher, KeyKind } from '../input/watcher';
 import type { OverlayManager } from '../overlay/manager';
@@ -31,6 +37,8 @@ import {
 import type { PanelWindow } from './panel-window';
 import { placeTarget, pointerStart, type TargetPlacement } from './placement';
 
+/** How often to check whether the app's window moved (when not tracking it live). */
+const FOLLOW_MS = 250;
 /** Live tracking: how often to re-read the app's state. */
 const TRACK_MS = 140;
 /** Fewer elements than this means the app doesn't really expose its UI: use screenshots. */
@@ -95,9 +103,12 @@ const ACTION_EVENTS: Record<PanelAction, RunnerEvent['type']> = {
   stop: 'STOP',
 };
 
+/** What to type for type and "go to" steps (a value the user still has to choose is not shown). */
 function typeText(step: Step): string | undefined {
-  if (step.action !== 'type' || step.input === undefined) return undefined;
-  return typeof step.input === 'string' ? step.input : `{${step.input.var}}`;
+  if ((step.action !== 'type' && step.action !== 'navigate') || step.input === undefined) {
+    return undefined;
+  }
+  return typeof step.input === 'string' ? step.input : undefined;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -170,10 +181,21 @@ export class GuideController {
     failures: number;
   } | null = null;
   private progress: Progress | null = null;
+  /** What matched each step when tracking began (elements that were there all along). */
+  private baseline: Map<number, string> | null = null;
   /** Showing the "done" check for the step just completed, until this time. */
   private confirmUntil = 0;
   /** Steps finished in ways the app's state can't show (typed into an unreadable field, Skip). */
   private doneByUser = new Set<number>();
+  /** Live tracking stopped at a step it can't follow (shown the usual way until done). */
+  private checkpoint: number | null = null;
+  /** Later steps already visible when the checkpoint began (anything new means it's done). */
+  private checkpointLater = new Set<number>();
+  private relocateTimer: NodeJS.Timeout | null = null;
+  /** The app's window when the current target was found on a screenshot. */
+  private locatedWindow: { id: number; bounds: Rect } | null = null;
+  /** Keeps a screenshot-found target on the app's window when the window moves. */
+  private follow: { timer: NodeJS.Timeout; busy: boolean; resizedTo: Rect | null } | null = null;
   /** The accessibility helper failed during this guide: use screenshots only. */
   private axOff = false;
 
@@ -186,6 +208,8 @@ export class GuideController {
   start(procedure: Procedure): void {
     this.stopTracking();
     this.doneByUser = new Set();
+    this.checkpoint = null;
+    this.baseline = null;
     this.axOff = false;
     this.watching =
       this.deps.input?.start({
@@ -228,6 +252,7 @@ export class GuideController {
         return;
       case 'clear':
         this.target = null;
+        this.stopFollow();
         void this.deps.overlays.clearAll();
         return;
       case 'show':
@@ -266,9 +291,33 @@ export class GuideController {
       const displayIds = presence
         ? [screen.getDisplayMatching(presence.window.bounds).id]
         : undefined;
+      this.locatedWindow = presence
+        ? { id: presence.window.id, bounds: { ...presence.window.bounds } }
+        : null;
+
+      // A step that is the user's own choice with no value given (e.g. "the file you want"):
+      // nothing to point at; say so and wait for them to do it.
+      if (
+        this.checkpoint === effect.stepIndex &&
+        effect.step.input !== undefined &&
+        typeof effect.step.input === 'object'
+      ) {
+        this.dispatch({
+          type: 'USER_CHOICE',
+          token: effect.token,
+          hint:
+            effect.step.action === 'type'
+              ? "Type your own text here (whatever fits your task). I'll continue as soon as you're done."
+              : effect.step.action === 'navigate'
+                ? "Go to the page you need in your browser. I'll continue as soon as you're there."
+                : "This one is your choice: pick it in the window. I'll continue as soon as you have.",
+        });
+        return;
+      }
 
       // 2. Apps that expose their UI (accessibility): follow their state live instead.
-      if (presence && this.deps.elements && !this.axOff) {
+      // (A checkpoint step can't be followed that way: find it on the screen instead.)
+      if (presence && this.deps.elements && !this.axOff && this.checkpoint !== effect.stepIndex) {
         this.startTracking(presence.window.processId);
         return;
       }
@@ -327,7 +376,15 @@ export class GuideController {
         }
       }
       const finalCaptures = captures2;
-      const finalAttempt = attempt2;
+      // Our own window check says the app is in front: a "wrong app" answer from the model is a
+      // naming mismatch (e.g. Writer open, guide written for Calc), not a reason to send the user
+      // elsewhere. Treat it as "not visible yet".
+      const finalAttempt: GroundingAttempt =
+        presence?.state === 'front' &&
+        attempt2.result.kind === 'none' &&
+        attempt2.result.reason === 'wrong_app'
+          ? { ...attempt2, result: { kind: 'none', reason: 'not_visible', hint: '' } }
+          : attempt2;
 
       // 3c. Nothing found right after the user acted: did their last step actually happen?
       if (finalAttempt.result.kind === 'none' && effect.previous && this.shown.length > 0) {
@@ -431,7 +488,12 @@ export class GuideController {
       tr.failures = 0;
 
       const steps = procedure.steps;
-      const p = assessProgress(steps, elements, this.doneByUser);
+      this.baseline ??= baselineOf(steps, elements);
+      const p = assessProgress(steps, elements, {
+        doneByUser: this.doneByUser,
+        baseline: this.baseline,
+        shown: this.state.stepIndex,
+      });
       this.progress = p;
       const last = steps.length - 1;
 
@@ -447,6 +509,30 @@ export class GuideController {
         if (now() - tr.finishing.since < 3000) return;
         tr.finishing = null;
       }
+
+      // A step the app's state can't confirm comes first: show it and wait for the user.
+      if (p.checkpoint && p.current !== null) {
+        tr.lostSince = null;
+        const cp = p.current;
+        const laterVisible = new Set(p.steps.flatMap((s, i) => (i > cp && s.match ? [i] : [])));
+        if (this.checkpoint !== cp) {
+          this.checkpoint = cp;
+          this.checkpointLater = laterVisible;
+          tr.key = '';
+          this.deps.log?.(`checkpoint: step ${cp + 1}`);
+          this.dispatch({ type: 'GOTO', stepIndex: cp });
+          return;
+        }
+        // Something from a later step newly appeared (e.g. the dialog's Open button became
+        // clickable once a file was picked): the checkpoint step has been done.
+        const appeared = [...laterVisible].find((i) => !this.checkpointLater.has(i));
+        if (appeared !== undefined && steps[cp]!.action !== 'manual') {
+          this.deps.log?.(`checkpoint done: step ${cp + 1} (step ${appeared + 1} appeared)`);
+          this.doneByUser.add(cp);
+        }
+        return;
+      }
+      this.checkpoint = null;
 
       if (p.current === null) {
         tr.lostSince ??= now();
@@ -480,6 +566,13 @@ export class GuideController {
 
       const key = `${index}:${[rect.x, rect.y, rect.width, rect.height].map(Math.round).join(',')}`;
       if (key === tr.key && highlighting && this.state.stepIndex === index) return;
+      // Same step, it just moved (e.g. the window was dragged): move the pointer with it.
+      if (highlighting && this.state.stepIndex === index && tr.key.startsWith(`${index}:`)) {
+        if (this.moveTarget(rect)) {
+          tr.key = key;
+          return;
+        }
+      }
 
       // Moving on: first show a short green check on what the user just did.
       if (highlighting && index > this.state.stepIndex && this.target) {
@@ -559,8 +652,9 @@ export class GuideController {
   // ---------------------------------------------------------------- "open the app" guidance
 
   private async startNavigation(token: number, app: StepApp, presence: AppPresence): Promise<void> {
-    this.stopNavigation();
-    // Keep checking; continue as soon as the app is open and in front.
+    // Keep the card's text (set just before); only replace the previous check and pointer.
+    if (this.navPoll) clearInterval(this.navPoll);
+    this.nav = null;
     // Keep checking; continue as soon as the app is in front, and update the instruction (and
     // pointer) as soon as anything changes, e.g. LibreOffice opened but Writer not yet.
     this.navPoll = setInterval(() => {
@@ -603,6 +697,10 @@ export class GuideController {
   // ---------------------------------------------------------------- watching the user
 
   private onMouseDown(p: Point): void {
+    if (this.tracker && this.checkpoint === this.state.stepIndex && this.state.procedure) {
+      this.onCheckpointClick(p);
+      return;
+    }
     if (this.state.phase !== 'HIGHLIGHTING' || !this.target) return;
     const panel = this.deps.panel.window();
     if (panel?.isVisible() && clickHits(p, panel.getBounds(), 0)) return; // handled by the card
@@ -617,6 +715,11 @@ export class GuideController {
       const steps = this.state.procedure!.steps;
       const index = this.state.stepIndex;
       if (step.action === 'type' && !onTarget && this.typed > 0) this.typedInto(index);
+      // A checkpoint is done when its control is clicked.
+      if (this.checkpoint === index && onTarget && step.action !== 'type') {
+        this.deps.log?.(`checkpoint done: step ${index + 1}`);
+        this.doneByUser.add(index);
+      }
       if (onTarget && index === steps.length - 1 && step.action !== 'type') {
         const missed = this.progress ? skippedBefore(this.progress, index, steps) : [];
         this.tracker.finishing = { missed, since: now() };
@@ -632,6 +735,45 @@ export class GuideController {
       return;
     }
     this.dispatch({ type: onTarget ? 'ACTED' : 'WRONG_CLICK' });
+  }
+
+  /**
+   * A click while stopped at a checkpoint: on its target = done; on a later step's control =
+   * the user moved on (did it, or skipped a check), and if that's the last step, it finishes.
+   * Otherwise look again shortly (the click may have revealed the target, e.g. opened a folder).
+   */
+  private onCheckpointClick(p: Point): void {
+    const panel = this.deps.panel.window();
+    if (panel?.isVisible() && clickHits(p, panel.getBounds(), 0)) return; // handled by the card
+    const steps = this.state.procedure!.steps;
+    const index = this.state.stepIndex;
+    const step = steps[index]!;
+    if (this.target && clickHits(p, this.target.global) && step.action !== 'type') {
+      this.deps.log?.(`checkpoint done: step ${index + 1} (clicked)`);
+      this.doneByUser.add(index);
+      return;
+    }
+    const later = this.progress?.steps.findIndex(
+      (s, i) => i > index && !!s.match && clickHits(p, s.match.rect),
+    );
+    if (later !== undefined && later > index) {
+      this.deps.log?.(`checkpoint passed: step ${index + 1} (clicked step ${later + 1})`);
+      this.doneByUser.add(index);
+      const laterStep = steps[later]!;
+      if (later === steps.length - 1 && laterStep.action !== 'type' && this.tracker) {
+        const missed = this.progress ? skippedBefore(this.progress, later, steps) : [];
+        this.tracker.finishing = { missed, since: now() };
+      }
+      return;
+    }
+    if (this.state.phase === 'TEXT_ONLY' && this.state.notice?.kind === 'not_found') {
+      if (this.relocateTimer) clearTimeout(this.relocateTimer);
+      const token = this.state.token;
+      this.relocateTimer = setTimeout(() => {
+        if (this.state.token === token && this.checkpoint === index)
+          this.dispatch({ type: 'RETRY' });
+      }, 700);
+    }
   }
 
   private onKey(kind: KeyKind): void {
@@ -659,13 +801,100 @@ export class GuideController {
    */
   private typedInto(index: number): void {
     const m = this.progress?.steps[index]?.match;
-    if (m && m.element.value === undefined) this.doneByUser.add(index);
+    if (this.checkpoint === index || (m && m.element.value === undefined)) {
+      this.doneByUser.add(index);
+    }
   }
 
   private resetTyping(): void {
     this.typed = 0;
     if (this.typingTimer) clearTimeout(this.typingTimer);
     this.typingTimer = null;
+  }
+
+  // ---------------------------------------------------------------- following the window
+
+  /** Move the highlighted target to a new global rect. False if it changed display. */
+  private moveTarget(global: Rect): boolean {
+    const t = this.target;
+    const step = this.state.procedure?.steps[this.state.stepIndex];
+    if (!t || !step) return false;
+    const center = { x: global.x + global.width / 2, y: global.y + global.height / 2 };
+    const display: DisplayGeometry = screen.getDisplayNearestPoint(center);
+    if (display.id !== t.displayId) return false;
+    this.target = { displayId: t.displayId, global, local: globalToLocal(global, display) };
+    this.drawGuide(
+      this.target,
+      this.shown,
+      step.action === 'type' || step.action === 'navigate' ? 'type' : 'click',
+      typeText(step),
+    );
+    const view = this.view();
+    if (view) this.deps.panel.show(view, global);
+    return true;
+  }
+
+  /**
+   * A target found on a screenshot stays put on screen; keep it on the app's window instead.
+   * Moved: shift it by the same amount. Resized (or moved to another display): find it again
+   * once the window stops changing. (Live tracking follows the window by itself.)
+   */
+  private startFollow(): void {
+    this.stopFollow();
+    const tracked = this.tracker && this.checkpoint === null;
+    if (tracked || !this.locatedWindow) return;
+    const follow = {
+      busy: false,
+      resizedTo: null as Rect | null,
+      timer: setInterval(() => {
+        if (follow.busy) return;
+        follow.busy = true;
+        void this.followTick(follow).finally(() => (follow.busy = false));
+      }, FOLLOW_MS),
+    };
+    this.follow = follow;
+  }
+
+  private stopFollow(): void {
+    if (this.follow) clearInterval(this.follow.timer);
+    this.follow = null;
+  }
+
+  private async followTick(f: NonNullable<typeof this.follow>): Promise<void> {
+    const step = this.state.procedure?.steps[this.state.stepIndex];
+    const was = this.locatedWindow;
+    if (!step || !was || this.state.phase !== 'HIGHLIGHTING') return this.stopFollow();
+    const p = await this.deps.presence(step.app).catch(() => null);
+    if (this.follow !== f || !p || p.state === 'missing' || p.window.id !== was.id) return;
+    const now = p.window.bounds;
+    const sameSize = now.width === was.bounds.width && now.height === was.bounds.height;
+    const dx = now.x - was.bounds.x;
+    const dy = now.y - was.bounds.y;
+    if (sameSize && dx === 0 && dy === 0) {
+      f.resizedTo = null;
+      return;
+    }
+    if (sameSize && this.target) {
+      const g = this.target.global;
+      if (this.moveTarget({ ...g, x: g.x + dx, y: g.y + dy })) {
+        this.locatedWindow = { id: was.id, bounds: { ...now } };
+        return;
+      }
+    }
+    // Resized or on another display: the layout may have changed. Look again once it settles.
+    const settled =
+      f.resizedTo &&
+      f.resizedTo.x === now.x &&
+      f.resizedTo.y === now.y &&
+      f.resizedTo.width === now.width &&
+      f.resizedTo.height === now.height;
+    if (!settled) {
+      f.resizedTo = { ...now };
+      return;
+    }
+    this.deps.log?.('window resized: finding the target again');
+    this.stopFollow();
+    this.dispatch({ type: 'RETRY' });
   }
 
   // ---------------------------------------------------------------- drawing
@@ -682,7 +911,8 @@ export class GuideController {
       totalSteps: procedure.steps.length,
       progressLabel: navigating ? 'Before we start' : undefined,
       instruction: navigating ? this.navText!.instruction : step.instruction,
-      typeText: typeText(step),
+      typeText: navigating ? undefined : typeText(step),
+      expected: navigating ? undefined : step.expectedAfter,
       appName: step.app.name,
       notice,
       canGoBack: stepIndex > 0,
@@ -696,7 +926,9 @@ export class GuideController {
     kind: 'click' | 'type' | 'done',
     text?: string,
   ): void {
-    const display = captures.find((c) => c.display.id === placement.displayId)?.display;
+    const display =
+      captures.find((c) => c.display.id === placement.displayId)?.display ??
+      screen.getAllDisplays().find((d) => d.id === placement.displayId);
     if (!display) return;
     void this.deps.overlays.render(display.id, {
       rings: [],
@@ -707,7 +939,8 @@ export class GuideController {
         rect: placement.local,
         text,
         pointerFrom: pointerStart(screen.getCursorScreenPoint(), display.bounds, placement.local),
-        key: `${this.state.token}-${placement.global.x}-${placement.global.y}`,
+        // Same step, same key: a moved target glides over instead of starting again.
+        key: String(this.state.token),
       },
     });
   }
@@ -728,10 +961,11 @@ export class GuideController {
         this.drawGuide(
           placement,
           this.shown,
-          step.action === 'type' ? 'type' : 'click',
+          step.action === 'type' || step.action === 'navigate' ? 'type' : 'click',
           typeText(step),
         );
         this.deps.panel.show(view, placement.global);
+        this.startFollow();
         return;
       }
     }

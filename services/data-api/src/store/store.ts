@@ -5,6 +5,7 @@
  * (row-level security), not just in application code.
  */
 import type { Procedure, ProcedureSource, Step } from '@qhint/schema';
+import type { JobStage } from './db-types';
 import type { TenantContext } from './tenant-tx';
 
 export type { TenantContext };
@@ -50,6 +51,42 @@ export interface NewDocument {
   sizeBytes: number;
 }
 
+export type { JobStage };
+
+export interface IngestJobRecord {
+  id: string;
+  documentId: string;
+  /** The upload's title and kind, for showing the job. */
+  title: string;
+  kind: DocumentRecord['kind'];
+  status: 'queued' | 'running' | 'done' | 'failed';
+  stage: JobStage;
+  progress: number;
+  language: string;
+  outputLanguage: string;
+  errorCode: string | null;
+  procedureId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What the worker learns when it claims a job: ids only, never content. */
+export interface ClaimedJob {
+  id: string;
+  tenantId: string;
+  ownerId: string;
+  documentId: string;
+  language: string;
+  outputLanguage: string;
+  attempts: number;
+}
+
+export interface ProcedureEdit {
+  title?: string;
+  variables?: Procedure['variables'];
+  steps?: Step[];
+}
+
 export interface GapRecord {
   id: string;
   kind: string;
@@ -80,12 +117,36 @@ export interface DataPlaneStore {
     submitForReview(ctx: TenantContext, id: string): Promise<boolean>;
     /** Admin publishes to the company library. */
     publish(ctx: TenantContext, id: string): Promise<boolean>;
+    /** Owner edits their own draft (validated as a whole). False if not theirs / not a draft. */
+    update(ctx: TenantContext, id: string, edit: ProcedureEdit): Promise<Procedure | null>;
+    /** Owner deletes their own draft. */
+    remove(ctx: TenantContext, id: string): Promise<boolean>;
   };
   documents: {
     /** Registers an upload; the storage key is always under the caller's tenant prefix. */
     create(ctx: TenantContext, input: NewDocument): Promise<DocumentRecord>;
     get(ctx: TenantContext, id: string): Promise<DocumentRecord | null>;
     markUploaded(ctx: TenantContext, id: string): Promise<boolean>;
+    setStatus(ctx: TenantContext, id: string, status: DocumentRecord['status']): Promise<void>;
+    /** Records that the uploaded file itself was deleted from storage. */
+    markSourceDeleted(ctx: TenantContext, id: string): Promise<void>;
+  };
+  ingest: {
+    /** Queue a job for the caller's uploaded document. Null if the document isn't theirs/ready. */
+    create(
+      ctx: TenantContext,
+      input: { documentId: string; language?: string; outputLanguage?: string },
+    ): Promise<IngestJobRecord | null>;
+    get(ctx: TenantContext, id: string): Promise<IngestJobRecord | null>;
+    list(ctx: TenantContext): Promise<IngestJobRecord[]>;
+    progress(ctx: TenantContext, id: string, stage: JobStage, progress: number): Promise<void>;
+    finish(ctx: TenantContext, id: string, procedureId: string, report: unknown): Promise<void>;
+    fail(ctx: TenantContext, id: string, errorCode: string): Promise<void>;
+    /** Put a job back in the queue after a temporary failure (it will be retried). */
+    release(ctx: TenantContext, id: string): Promise<void>;
+    report(ctx: TenantContext, id: string): Promise<unknown>;
+    /** Worker only: take the oldest waiting job (or one whose worker died). Ids only. */
+    claim(): Promise<ClaimedJob | null>;
   };
   gaps: {
     create(ctx: TenantContext, input: NewGap): Promise<GapRecord>;

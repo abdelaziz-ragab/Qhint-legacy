@@ -1,4 +1,4 @@
-import { desktopCapturer, screen, type Display, type NativeImage } from 'electron';
+import { desktopCapturer, nativeImage, screen, type Display, type NativeImage } from 'electron';
 import {
   aspectMismatch,
   DEFAULT_LONG_SIDE,
@@ -16,7 +16,8 @@ export interface DisplayCapture extends CaptureFrame {
   label: string;
   tile: { index: number; count: number };
   jpeg: Buffer;
-  matchMethod: SourceMatch['method'];
+  /** How the image was tied to its display: by source id, by shape, or taken natively. */
+  matchMethod: SourceMatch['method'] | 'native';
   capturedAt: number;
   /** Kept only when requested (debug); raw 4-byte-per-pixel data, platform channel order. */
   bitmap?: Buffer;
@@ -35,6 +36,11 @@ export interface CaptureOptions {
   keepBitmap?: boolean;
   /** Only these displays (e.g. the one the guided app is on). Default: all. */
   displayIds?: number[];
+  /**
+   * Take each display's image another way (macOS helper: leaves Qhint's windows out). JPEG at the
+   * requested pixel size, or null when it fails (that display is then skipped).
+   */
+  grab?: (displayId: number, size: { width: number; height: number }) => Promise<Buffer | null>;
 }
 
 export function toGeometry(d: Display): DisplayGeometry {
@@ -57,29 +63,45 @@ export async function captureDisplays(opts: CaptureOptions = {}): Promise<Captur
   const plans = new Map(displays.map((d) => [d.id, planCapture(d, longSide)]));
   // Thumbnails are scaled to fit inside this square, keeping aspect; big enough for every plan.
   const box = Math.max(...[...plans.values()].map((p) => Math.max(p.full.width, p.full.height)));
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: box, height: box },
-    fetchWindowIcons: false,
-  });
+  const sources = opts.grab
+    ? []
+    : await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: box, height: box },
+        fetchWindowIcons: false,
+      });
 
-  const matches = matchSourcesToDisplays(
-    sources.map((s) => ({
-      id: s.id,
-      displayId: s.display_id,
-      thumbnailSize: s.thumbnail.getSize(),
-    })),
-    displays,
-  );
+  const matches = opts.grab
+    ? []
+    : matchSourcesToDisplays(
+        sources.map((s) => ({
+          id: s.id,
+          displayId: s.display_id,
+          thumbnailSize: s.thumbnail.getSize(),
+        })),
+        displays,
+      );
+  const grabbed = opts.grab
+    ? await Promise.all(
+        displays.map(async (d) => {
+          const jpeg = await opts.grab!(d.id, plans.get(d.id)!.full).catch(() => null);
+          return jpeg ? nativeImage.createFromBuffer(jpeg) : undefined;
+        }),
+      )
+    : [];
 
   const captures: DisplayCapture[] = [];
   const skippedDisplayIds: number[] = [];
   const capturedAt = Date.now();
 
-  for (const display of displays) {
+  for (const [i, display] of displays.entries()) {
     const plan = plans.get(display.id)!;
-    const match = matches.find((m) => m.displayId === display.id);
-    const thumb: NativeImage | undefined = sources.find((s) => s.id === match?.sourceId)?.thumbnail;
+    const match = opts.grab
+      ? { method: 'native' as const }
+      : matches.find((m) => m.displayId === display.id);
+    const thumb: NativeImage | undefined = opts.grab
+      ? grabbed[i]
+      : sources.find((s) => s.id === (match as SourceMatch | undefined)?.sourceId)?.thumbnail;
     if (!match || !thumb || thumb.isEmpty()) {
       skippedDisplayIds.push(display.id);
       continue;

@@ -39,6 +39,9 @@ function status(view: PanelView): { text: string; tone: 'info' | 'warn' | 'ok' }
     case 'NEEDS_NAVIGATION':
       return { text: view.notice?.hint || "I'll continue as soon as it's ready.", tone: 'info' };
     case 'TEXT_ONLY':
+      if (view.notice?.kind === 'no_target') {
+        return { text: view.notice.hint || 'Do this yourself, then press Next.', tone: 'info' };
+      }
       if (view.notice?.kind === 'not_found') {
         return {
           text: `I can't see it on your screen right now.${view.notice.hint ? ` ${view.notice.hint}` : ''}`,
@@ -121,6 +124,7 @@ export function Panel() {
           Type: <strong>{view.typeText}</strong>
         </p>
       ) : null}
+      {view.expected ? <p className="expected">You should then see: {view.expected}</p> : null}
       {note ? (
         <p className={`status ${note.tone}`} role="status">
           {busy ? <span className="spinner" aria-hidden="true" /> : null}

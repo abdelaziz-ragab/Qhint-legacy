@@ -64,6 +64,16 @@ describe('appPresence', () => {
     expect(p.state).toBe('front');
   });
 
+  it('front: a floating screen-sharing bar on top does not hide the active app', () => {
+    const bar = win(3, 'Google Chrome', 'meet.google.com is sharing your screen.', {
+      bounds: { x: 0, y: 0, width: 420, height: 60 },
+    });
+    const windows = [bar, win(1, 'LibreOffice', 'Untitled 1 - LibreOffice Writer')];
+    expect(appPresence(writer, windows, notOwn, 10).state).toBe('front');
+    // Chrome really active: Writer is behind.
+    expect(appPresence(writer, windows, notOwn, 30).state).toBe('behind');
+  });
+
   it('behind: another app is in front', () => {
     const p = appPresence(
       writer,
@@ -110,5 +120,33 @@ describe('appPresence', () => {
       bounds: { x: 0, y: 0, width: 10, height: 10 },
     });
     expect(appPresence(writer, [tiny], notOwn).state).toBe('missing');
+  });
+});
+
+describe('web apps', () => {
+  const moodle = { name: 'Moodle (web)', kind: 'web' as const };
+  const chrome = (title: string, pid = 50) => win(7, 'Google Chrome', title, { processId: pid });
+
+  it('a browser in front counts, even when the page title lacks the site name', () => {
+    expect(appPresence(moodle, [chrome('Course: History 101')], notOwn).state).toBe('front');
+  });
+
+  it('a browser behind another app is "behind"', () => {
+    const term = win(1, 'Terminal', 'zsh', { processId: 9 });
+    expect(appPresence(moodle, [term, chrome('Dashboard')], notOwn).state).toBe('behind');
+  });
+
+  it('no browser at all is "missing"', () => {
+    expect(appPresence(moodle, [win(1, 'Terminal', 'zsh')], notOwn).state).toBe('missing');
+  });
+
+  it('a desktop app whose name merely contains a browser name is still a desktop app', () => {
+    const research = { name: 'Research Tool', kind: 'native' as const };
+    expect(appPresence(research, [chrome('Research Tool docs')], notOwn).state).toBe('missing');
+  });
+
+  it('desktop apps are not satisfied by a browser', () => {
+    const writer = { name: 'LibreOffice Writer', kind: 'native' as const };
+    expect(appPresence(writer, [chrome('LibreOffice download')], notOwn).state).not.toBe('front');
   });
 });

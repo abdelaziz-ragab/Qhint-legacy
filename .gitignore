@@ -34,3 +34,7 @@ infra/**/backend.hcl
 
 # native helper build output
 apps/desktop/native/bin/
+
+# sample videos (downloaded by test-data/fetch.sh)
+test-data/videos/
+test-data/out/

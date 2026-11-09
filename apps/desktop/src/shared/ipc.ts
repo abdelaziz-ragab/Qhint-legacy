@@ -8,6 +8,18 @@ export const IPC = {
   authSignOut: 'auth:sign-out',
   procedures: 'data:procedures',
   runSample: 'guide:run-sample',
+  guidesLists: 'guides:lists',
+  guidesGet: 'guides:get',
+  guidesReport: 'guides:report',
+  guidesUpdate: 'guides:update',
+  guidesRemove: 'guides:remove',
+  guidesSubmit: 'guides:submit',
+  guidesJobs: 'guides:jobs',
+  guidesPickFile: 'guides:pick-file',
+  guidesCreate: 'guides:create',
+  guidesRun: 'guides:run',
+  /** main -> renderer: upload progress while creating a guide. */
+  guidesUploadProgress: 'guides:upload-progress',
 } as const;
 
 export interface AppInfo {

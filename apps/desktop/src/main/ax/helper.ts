@@ -6,11 +6,13 @@
 import { app, screen } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { release } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { AxElementsResponse, type AxElement } from './types';
 
 const TIMEOUT_MS = 1500;
+const CAPTURE_TIMEOUT_MS = 6000;
 
 function helperPath(): string | null {
   const file =
@@ -27,6 +29,16 @@ function helperPath(): string | null {
 }
 
 type Pending = { resolve: (v: unknown) => void; timer: NodeJS.Timeout };
+
+/**
+ * Can Qhint's windows be visible to screen sharing? Only when its own screenshots can leave them
+ * out: macOS 14+ with the helper. Elsewhere they stay hidden from every capture (Windows: the
+ * only way to keep them out of Qhint's screenshots without flicker).
+ */
+export function canShowToScreenSharing(): boolean {
+  const darwinMajor = Number(release().split('.')[0]);
+  return process.platform === 'darwin' && darwinMajor >= 23 && helperPath() !== null;
+}
 
 export class AxHelper {
   private proc: ChildProcessWithoutNullStreams | null = null;
@@ -50,6 +62,22 @@ export class AxHelper {
       const r = screen.screenToDipRect(null, { x: e.x, y: e.y, width: e.w, height: e.h });
       return { ...e, x: r.x, y: r.y, w: r.width, h: r.height };
     });
+  }
+
+  /**
+   * macOS: a screenshot of one display (JPEG, `size` in pixels) without Qhint's own windows, so
+   * the guide can stay visible to screen sharing. Null if unavailable.
+   */
+  async capture(
+    displayId: number,
+    size: { width: number; height: number },
+  ): Promise<Buffer | null> {
+    if (process.platform !== 'darwin') return null;
+    const res = (await this.request(
+      { cmd: 'capture', display: displayId, ...size, exclude: process.pid },
+      CAPTURE_TIMEOUT_MS,
+    )) as { ok?: boolean; jpeg?: unknown } | null;
+    return res?.ok && typeof res.jpeg === 'string' ? Buffer.from(res.jpeg, 'base64') : null;
   }
 
   /** Process id of the app in front (menus and dialogs included); null if unavailable. */
@@ -99,7 +127,7 @@ export class AxHelper {
     return proc;
   }
 
-  private request(body: Record<string, unknown>): Promise<unknown> {
+  private request(body: Record<string, unknown>, timeoutMs = TIMEOUT_MS): Promise<unknown> {
     const proc = this.ensure();
     if (!proc) return Promise.resolve(null);
     const id = this.nextId++;
@@ -107,7 +135,7 @@ export class AxHelper {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve(null);
-      }, TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(id, { resolve, timer });
       proc.stdin.write(`${JSON.stringify({ id, ...body })}\n`);
     });

@@ -30,16 +30,12 @@ export const SERVICE_NAME = 'data-api';
 
 /** What can be uploaded, and how big. */
 export const UPLOAD_LIMITS = {
-  video: { types: ['video/mp4', 'video/webm', 'video/quicktime'], maxBytes: 2 * 1024 ** 3 },
-  doc: {
-    types: [
-      'application/pdf',
-      'text/plain',
-      'text/markdown',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    ],
-    maxBytes: 50 * 1024 ** 2,
+  video: {
+    types: ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg'],
+    maxBytes: 1024 ** 3,
   },
+  // Word documents come later (converted to text first); PDFs and text work now.
+  doc: { types: ['application/pdf', 'text/plain', 'text/markdown'], maxBytes: 30 * 1024 ** 2 },
 } as const;
 
 export interface DataDeps {
@@ -124,6 +120,30 @@ const UploadBody = z.discriminatedUnion('kind', [
   }),
 ]);
 
+const ProcedureEditBody = z
+  .object({
+    title: z.string().min(1).max(300).optional(),
+    variables: z.array(Variable).max(50).optional(),
+    steps: z.array(Step).min(1).max(200).optional(),
+  })
+  .refine((b) => b.title !== undefined || b.variables !== undefined || b.steps !== undefined, {
+    message: 'nothing to change',
+  });
+
+const IngestBody = z.object({
+  documentId: Id,
+  /** Spoken language of a video (BCP-47), for transcription. */
+  language: z
+    .string()
+    .regex(/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/)
+    .optional(),
+  /** Language to write the guide in. */
+  outputLanguage: z
+    .string()
+    .regex(/^[\p{L} ()-]{2,40}$/u)
+    .optional(),
+});
+
 const NewGapBody = z.object({
   kind: GapKind,
   question: z.string().max(2000).optional(),
@@ -183,6 +203,41 @@ export function buildApp(deps: DataDeps) {
     },
   );
 
+  app.patch(
+    '/procedures/:id',
+    { onRequest: auth, schema: { params: ProcedureId, body: ProcedureEditBody } },
+    async (req) => {
+      try {
+        const p = await store.procedures.update(authOf(req), req.params.id, req.body);
+        if (!p) throw notFound();
+        return p;
+      } catch (err) {
+        if (err instanceof z.ZodError) throw new HttpError(400, 'invalid_procedure');
+        throw err;
+      }
+    },
+  );
+
+  app.delete(
+    '/procedures/:id',
+    { onRequest: auth, schema: { params: ProcedureId } },
+    async (req, reply) => {
+      const ctx = authOf(req);
+      const procedure = await store.procedures.get(ctx, req.params.id);
+      if (!(await store.procedures.remove(ctx, req.params.id))) throw notFound();
+      // Its pictures go too (only keys under this tenant's own prefix, as always).
+      const plane = await deps.planes.resolve(ctx.tenantId);
+      const prefix = `t/${ctx.tenantId}/`;
+      const keys = (procedure?.steps ?? [])
+        .map((s) => s.target?.exemplar?.imageRef)
+        .filter((k): k is string => !!k && k.startsWith(prefix));
+      if (plane) {
+        await Promise.all(keys.map((k) => deps.storage.remove(plane.bucket, k).catch(() => {})));
+      }
+      return reply.status(204).send();
+    },
+  );
+
   app.post(
     '/procedures/:id/submit',
     { onRequest: auth, schema: { params: ProcedureId } },
@@ -218,10 +273,38 @@ export function buildApp(deps: DataDeps) {
     '/uploads/:id/complete',
     { onRequest: auth, schema: { params: ProcedureId } },
     async (req) => {
-      if (!(await store.documents.markUploaded(authOf(req), req.params.id))) throw notFound();
+      const ctx = authOf(req);
+      const doc = await store.documents.get(ctx, req.params.id);
+      if (!doc || doc.ownerId !== ctx.userId) throw notFound();
+      // Only mark it uploaded once the file is really in storage.
+      const plane = await deps.planes.resolve(ctx.tenantId);
+      const size = plane ? await deps.storage.size(plane.bucket, doc.storageKey) : null;
+      if (!size) throw new HttpError(409, 'upload_missing');
+      if (!(await store.documents.markUploaded(ctx, req.params.id))) throw notFound();
       return { status: 'uploaded' as const };
     },
   );
+
+  // ---------------------------------------------------------------- ingest (upload -> draft guide)
+
+  app.post('/ingest', { onRequest: auth, schema: { body: IngestBody } }, async (req, reply) => {
+    const job = await store.ingest.create(authOf(req), req.body);
+    // Not theirs, not uploaded yet, already processed, or a type we can't process.
+    if (!job) throw new HttpError(409, 'document_not_ready');
+    return reply.status(201).send(job);
+  });
+
+  app.get('/ingest', { onRequest: auth }, async (req) => ({
+    jobs: await store.ingest.list(authOf(req)),
+  }));
+
+  app.get('/ingest/:id', { onRequest: auth, schema: { params: ProcedureId } }, async (req) => {
+    const ctx = authOf(req);
+    const job = await store.ingest.get(ctx, req.params.id);
+    if (!job) throw notFound();
+    const report = job.status === 'done' ? await store.ingest.report(ctx, job.id) : null;
+    return { ...job, report };
+  });
 
   // ---------------------------------------------------------------- locate (screenshots in, box out)
 

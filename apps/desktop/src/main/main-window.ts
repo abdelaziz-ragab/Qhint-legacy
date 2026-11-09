@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 import { appIcon } from './icons';
+import { canShowToScreenSharing } from './ax/helper';
 
 /** The small Qhint panel (Ask / Library / Create later). Hidden instead of closed. */
 export class MainWindow {
@@ -32,8 +33,10 @@ export class MainWindow {
 
   private create(): BrowserWindow {
     const win = new BrowserWindow({
-      width: 420,
-      height: 600,
+      width: 980,
+      height: 680,
+      minWidth: 760,
+      minHeight: 520,
       show: false,
       title: 'Qhint',
       // Windows taskbar / window icon (macOS uses the Dock icon).
@@ -46,8 +49,8 @@ export class MainWindow {
       },
     });
 
-    // Keep our own windows out of screen captures.
-    win.setContentProtection(true);
+    // Hidden from screen captures unless Qhint's own screenshots can leave it out (macOS).
+    win.setContentProtection(!canShowToScreenSharing());
 
     win.on('close', (e) => {
       if (!this.quitting) {

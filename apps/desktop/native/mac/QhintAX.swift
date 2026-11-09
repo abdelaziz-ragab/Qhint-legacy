@@ -9,11 +9,16 @@
 //   {"id":1,"cmd":"status"}                 -> {"id":1,"ok":true,"trusted":true}
 //   {"id":2,"cmd":"frontmost"}              -> {"id":2,"ok":true,"pid":123,"name":"LibreOffice"}
 //   {"id":3,"cmd":"elements","pid":123}     -> {"id":3,"ok":true,"elements":[...],"truncated":false}
+//   {"id":4,"cmd":"capture","display":1,"width":2560,"height":1440,"exclude":456}
+//                                           -> {"id":4,"ok":true,"jpeg":"<base64>"}
+//     A screenshot of one display without the windows of process `exclude` (Qhint itself), so
+//     the guide can stay visible to screen sharing while Qhint's own screenshots stay clean.
 // Coordinates are global, in points, top-left origin of the primary display (same as Electron).
 
 import AppKit
 import ApplicationServices
 import Foundation
+import ScreenCaptureKit
 
 let maxElements = 3000
 let maxDepth = 40
@@ -23,13 +28,35 @@ let maxText = 160
 let contentRoles: Set<String> = ["AXTextArea", "AXWebArea", "AXScrollArea", "AXStaticText"]
 
 // Roles whose contents are document text, not controls: skip their children (big and not needed).
-let skipChildrenOf: Set<String> = ["AXTextArea", "AXWebArea", "AXTable", "AXOutline", "AXList", "AXBrowser"]
+// Web pages (AXWebArea) are walked: in a web app the page *is* the interface.
+let skipChildrenOf: Set<String> = ["AXTextArea", "AXTable", "AXOutline", "AXList", "AXBrowser"]
+
+// Chromium-based browsers only build their accessibility tree once an assistive tool asks.
+let chromiumBrowsers: Set<String> = [
+  "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary", "org.chromium.Chromium",
+  "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser", "com.operasoftware.Opera",
+  "com.vivaldi.Vivaldi",
+]
+var accessibilityRequested = Set<pid_t>()
+
+/// Ask Chrome / Electron apps to expose their interface (what screen readers do). Once per app.
+func requestAccessibility(_ app: AXUIElement, pid: pid_t) {
+  if accessibilityRequested.contains(pid) { return }
+  accessibilityRequested.insert(pid)
+  // Electron apps (Slack, Teams, VS Code...) and recent Chromium honour this one.
+  AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+  // Chromium browsers also look for this, which is what VoiceOver sets.
+  if let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+     chromiumBrowsers.contains(bundle) {
+    AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+  }
+}
 
 let attributeNames: [String] = [
   kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute,
   kAXValueAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXEnabledAttribute,
   kAXFocusedAttribute, kAXIdentifierAttribute, kAXTitleUIElementAttribute, kAXChildrenAttribute,
-  kAXHelpAttribute,
+  kAXHelpAttribute, "AXURL",
 ]
 
 func clip(_ s: String) -> String { s.count > maxText ? String(s.prefix(maxText)) : s }
@@ -107,6 +134,13 @@ final class Walker {
       if let v = at(8) as? Bool, v { e["focused"] = true }
       if let v = stringValue(at(9)) { e["identifier"] = v }
       if let v = stringValue(at(12)) { e["help"] = v }
+      // Web pages: which address the page is on (lets a "go to this address" step be checked).
+      if role == "AXWebArea", let u = at(13) {
+        if let url = u as? URL { e["url"] = String(url.absoluteString.prefix(500)) }
+        else if CFGetTypeID(u) == CFURLGetTypeID() {
+          e["url"] = String((CFURLGetString((u as! CFURL)) as String).prefix(500))
+        }
+      }
       if let labelEl = at(10), CFGetTypeID(labelEl) == AXUIElementGetTypeID() {
         var t: CFTypeRef?
         if AXUIElementCopyAttributeValue(labelEl as! AXUIElement, kAXValueAttribute as CFString, &t) == .success,
@@ -118,6 +152,8 @@ final class Walker {
     }
 
     if skipChildrenOf.contains(role) { return }
+    // A container entirely off screen (e.g. the part of a web page scrolled away): its children are too.
+    if let f = frame, !visible(f), role != "AXMenu", role != "AXMenuBar", role != "AXMenuBarItem", depth > 0 { return }
     if let kids = at(11) as? [AXUIElement] {
       for k in kids { walk(k, depth: depth + 1, window: window) }
     }
@@ -127,6 +163,7 @@ final class Walker {
 func elements(pid: pid_t) -> [String: Any] {
   let app = AXUIElementCreateApplication(pid)
   AXUIElementSetMessagingTimeout(app, 0.3)
+  requestAccessibility(app, pid: pid)
   let w = Walker()
   // Menu bar (and any open menu under it) first, then windows front to back.
   var bar: CFTypeRef?
@@ -139,6 +176,37 @@ func elements(pid: pid_t) -> [String: Any] {
     for (i, win) in list.enumerated() { w.walk(win, depth: 0, window: i) }
   }
   return ["elements": w.out, "truncated": w.truncated]
+}
+
+/// Screenshot of a display, leaving out one app's windows. Needs macOS 14 (ScreenCaptureKit).
+func capture(display: UInt32, width: Int, height: Int, exclude: pid_t) -> [String: Any] {
+  guard #available(macOS 14.0, *) else { return ["ok": false, "error": "unsupported"] }
+  var result: [String: Any] = ["ok": false, "error": "capture_failed"]
+  let done = DispatchSemaphore(value: 0)
+  Task.detached {
+    defer { done.signal() }
+    do {
+      let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+      guard let d = content.displays.first(where: { $0.displayID == display }) else {
+        result = ["ok": false, "error": "no_display"]
+        return
+      }
+      let own = content.applications.filter { $0.processID == exclude }
+      let filter = SCContentFilter(display: d, excludingApplications: own, exceptingWindows: [])
+      let config = SCStreamConfiguration()
+      config.width = max(1, width)
+      config.height = max(1, height)
+      config.showsCursor = false
+      let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+      let rep = NSBitmapImageRep(cgImage: image)
+      guard let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.92]) else { return }
+      result = ["ok": true, "jpeg": jpeg.base64EncodedString()]
+    } catch {
+      result = ["ok": false, "error": "capture_failed"]
+    }
+  }
+  if done.wait(timeout: .now() + 5) == .timedOut { return ["ok": false, "error": "timeout"] }
+  return result
 }
 
 func respond(_ obj: [String: Any]) {
@@ -164,6 +232,14 @@ while let line = readLine() {
     var r = elements(pid: pid_t(pid))
     r["id"] = id
     r["ok"] = true
+    respond(r)
+  case "capture":
+    guard let display = req["display"] as? Int, let width = req["width"] as? Int,
+          let height = req["height"] as? Int, let exclude = req["exclude"] as? Int else {
+      respond(["id": id, "ok": false, "error": "bad_request"]); continue
+    }
+    var r = capture(display: UInt32(display), width: width, height: height, exclude: pid_t(exclude))
+    r["id"] = id
     respond(r)
   default:
     respond(["id": id, "ok": false, "error": "unknown_command"])

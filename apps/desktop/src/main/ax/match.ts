@@ -139,8 +139,28 @@ export interface AxMatch {
   rect: Rect;
 }
 
+/** Names browsers give their address bar (Chrome/Edge/Brave, Safari, Firefox, Arc). */
+const ADDRESS_BAR =
+  /address and search bar|smart search field|search with .* or enter address|enter address|address bar|^url$/i;
+
+/** The browser's address bar (for "go to this address" steps); null if not exactly one. */
+export function findAddressBar(elements: AxElement[]): AxMatch | null {
+  const bars = elements.filter(
+    (e) =>
+      FIELD.includes(e.role) &&
+      e.window >= 0 &&
+      [e.title, e.description, e.label].some((n) => n && ADDRESS_BAR.test(n)),
+  );
+  if (bars.length === 0) return null;
+  // Several windows: the frontmost one.
+  const front = Math.min(...bars.map((b) => b.window));
+  const inFront = bars.filter((b) => b.window === front);
+  return inFront.length === 1 ? { element: inFront[0]!, rect: rectOf(inFront[0]!) } : null;
+}
+
 /** Find the step's target; null when it isn't there or isn't clear-cut. */
 export function matchTarget(step: Step, elements: AxElement[]): AxMatch | null {
+  if (step.action === 'navigate') return findAddressBar(elements);
   if (!step.target || step.action === 'manual' || step.action === 'wait') return null;
   const wanted = targetNames(step);
   if (wanted.length === 0) return null;
@@ -153,7 +173,20 @@ export function matchTarget(step: Step, elements: AxElement[]): AxMatch | null {
   if (candidates.length === 0 && roles === FIELD) {
     candidates = wanted.flatMap((w) => labelledFields(w, usable, roles));
   }
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    // Web pages often add words to a link's name ("English 7,254,000+ articles" for the
+    // "English" link). Accept a name that starts with the wanted words, but only if exactly one
+    // control does: anything less clear-cut is left to the screenshot method.
+    // Links only: a button called "Insert Image" is a different button from "Insert".
+    const prefixed = usable.filter(
+      (e) =>
+        LINK.includes(e.role) &&
+        roles.includes(e.role) &&
+        names(e).some((n) => wanted.some((w) => w.length >= 3 && n.startsWith(`${w} `))),
+    );
+    if (prefixed.length !== 1) return null;
+    candidates = prefixed;
+  }
 
   // Prefer what the user is looking at: open menus, then windows front to back. The menu bar is
   // always there, so it only wins when nothing else matches.

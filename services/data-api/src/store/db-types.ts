@@ -16,6 +16,49 @@ export interface DocumentsTable {
   size_bytes: ColumnType<string, number, number>;
   status: Generated<'pending_upload' | 'uploaded' | 'processing' | 'ready' | 'failed'>;
   created_at: Timestamp;
+  source_deleted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+}
+
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
+export type JobStage =
+  | 'queued'
+  | 'reading'
+  | 'frames'
+  | 'transcribing'
+  | 'writing'
+  | 'images'
+  | 'saving'
+  | 'done'
+  | 'failed';
+
+export interface IngestJobsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  owner_id: string;
+  document_id: string;
+  status: Generated<JobStatus>;
+  stage: Generated<JobStage>;
+  progress: Generated<number>;
+  language: Generated<string>;
+  output_language: Generated<string>;
+  error_code: string | null;
+  procedure_id: string | null;
+  attempts: Generated<number>;
+  locked_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface IngestReportsTable {
+  job_id: string;
+  tenant_id: string;
+  owner_id: string;
+  body: ColumnType<unknown, string, string>;
+  created_at: Timestamp;
 }
 
 export interface ProceduresTable {
@@ -64,4 +107,6 @@ export interface ContentDB {
   'content.procedures': ProceduresTable;
   'content.runs': RunsTable;
   'content.gaps': GapsTable;
+  'content.ingest_jobs': IngestJobsTable;
+  'content.ingest_reports': IngestReportsTable;
 }

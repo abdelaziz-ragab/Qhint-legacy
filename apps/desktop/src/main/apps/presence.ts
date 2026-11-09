@@ -23,6 +23,29 @@ export type AppPresence =
   | { state: 'partial'; window: WindowInfo }
   | { state: 'missing' };
 
+/** Web browsers: a web app's guide runs in whichever one the user has. */
+const BROWSERS = [
+  'google chrome',
+  'chrome',
+  'chromium',
+  'safari',
+  'firefox',
+  'microsoft edge',
+  'msedge',
+  'brave browser',
+  'arc',
+  'opera',
+  'vivaldi',
+];
+
+export function isBrowser(w: WindowInfo): boolean {
+  const owner = w.owner
+    .trim()
+    .toLowerCase()
+    .replace(/\.exe$/, '');
+  return BROWSERS.includes(owner) || /\b(chrome|firefox|msedge|safari)\b/.test(owner);
+}
+
 const STOP_WORDS = new Set(['app', 'the', 'desktop', 'client', 'for', 'and']);
 
 /** Lower-case words of the app name worth matching on, brand first ("libreoffice", "writer"). */
@@ -71,22 +94,44 @@ export function matchesApp(app: StepApp, w: WindowInfo): boolean {
 /**
  * `windows` must be in front-to-back order (as the OS reports them). Qhint's own windows are
  * ignored so clicking the step card doesn't count as "another app in front".
+ *
+ * `activePid` is the app the OS says is active, when known. It decides what's "in front": the
+ * topmost window can be a floating bar that's always on top (e.g. "meet.google.com is sharing
+ * your screen") while the user is working in the app underneath.
  */
 export function appPresence(
   app: StepApp,
   windows: WindowInfo[],
   isOwn: (w: WindowInfo) => boolean,
+  activePid: number | null = null,
 ): AppPresence {
   const others = windows.filter((w) => !isOwn(w));
-  const usable = others.filter((w) => w.bounds.width > 40 && w.bounds.height > 40);
+  const inFront = (w: WindowInfo) =>
+    activePid !== null ? w.processId === activePid : others[0]?.processId === w.processId;
+  // A desktop app is never a browser tab (a page titled "LibreOffice download" isn't Writer),
+  // unless the app is the browser itself.
+  const appIsBrowser = BROWSERS.some((b) => new RegExp(`\\b${b}\\b`).test(app.name.toLowerCase()));
+  const usable = others.filter(
+    (w) =>
+      w.bounds.width > 40 &&
+      w.bounds.height > 40 &&
+      (app.kind === 'web' || appIsBrowser || !isBrowser(w)),
+  );
   const full = usable.find((w) => matchesApp(app, w));
   if (full) {
     // Menus, pop-ups and dialogs are separate windows of the same app: if the frontmost window
     // belongs to the same process, the app is still the one in front.
-    const front = others[0];
-    return front && front.processId === full.processId
-      ? { state: 'front', window: full }
-      : { state: 'behind', window: full };
+    return inFront(full) ? { state: 'front', window: full } : { state: 'behind', window: full };
+  }
+  // A website: its name often isn't in the window title, so any browser window will do (the
+  // guide itself checks the page). The frontmost browser window counts as the app being in front.
+  if (app.kind === 'web') {
+    const browser = usable.find(isBrowser);
+    if (browser) {
+      return inFront(browser)
+        ? { state: 'front', window: browser }
+        : { state: 'behind', window: browser };
+    }
   }
   const brand = usable.find((w) => matchesBrand(app, w));
   return brand ? { state: 'partial', window: brand } : { state: 'missing' };

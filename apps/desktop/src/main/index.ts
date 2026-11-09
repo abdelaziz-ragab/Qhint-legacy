@@ -19,7 +19,7 @@ import { IPC, type AppInfo, type AuthStatus, type ProcedureLists } from '../shar
 import { AuthSession } from './auth/session';
 import { captureDisplays, type DisplayCapture } from './capture/capture';
 import { appPresence } from './apps/presence';
-import { AxHelper } from './ax/helper';
+import { AxHelper, canShowToScreenSharing } from './ax/helper';
 import { listWindows, ownWindowFilter } from './apps/windows';
 import { hasInputPermission, InputWatcher } from './input/watcher';
 import type { VerifyResult } from '@qhint/schema';
@@ -30,6 +30,8 @@ import { ElementCacheProvider, GroundingEngine, ModelGroundingProvider } from '.
 import { PanelWindow } from './runner/panel-window';
 import { logGuideEvent, logLocateAttempt, logPresence } from './debug/locate-log';
 import { SAMPLE_PROCEDURES, type SampleId } from './runner/samples';
+import { GuideService, sourceType, withVariables } from './guides/service';
+import { GUIDE_SOURCES, type CreateGuideRequest, type Guide } from '../shared/guides';
 
 // Dev only: QHINT_DEBUG_PORT=9222 exposes Chrome DevTools Protocol for inspecting our windows.
 const debugPort = process.env.QHINT_DEBUG_PORT;
@@ -238,6 +240,7 @@ function start() {
       jpeg: c.jpeg.toString('base64'),
     }));
   const axHelper = new AxHelper();
+  const showToSharing = canShowToScreenSharing();
   app.on('will-quit', () => axHelper.stop());
   const guide = new GuideController({
     overlays,
@@ -245,8 +248,24 @@ function start() {
     elements: async (pid) => (hasInputPermission(false) ? axHelper.elements(pid) : null),
     frontmost: () => axHelper.frontmost(),
     panel,
-    capture: async (displayIds) =>
-      (await withOwnWindowsHidden(ownWindows(), () => captureDisplays({ displayIds }))).captures,
+    capture: async (displayIds) => {
+      // macOS: the helper's screenshots leave Qhint out, so the guide stays visible to screen
+      // sharing. If that fails, hide our windows for a moment and use the standard capture.
+      if (showToSharing) {
+        const native = await captureDisplays({
+          displayIds,
+          grab: (id, size) => axHelper.capture(id, size),
+        });
+        if (native.captures.length && !native.skippedDisplayIds.length) return native.captures;
+      }
+      return (
+        await withOwnWindowsHidden(
+          ownWindows(),
+          () => captureDisplays({ displayIds }),
+          showToSharing || undefined,
+        )
+      ).captures;
+    },
     locate: (step, captures, opts) => grounding.locate(step, captures, opts),
     verify: async (step, before, after) => {
       const res = await postToDataApi('/verify', {
@@ -264,9 +283,14 @@ function start() {
         if (DEBUG_TOOLS) logPresence(stepApp.name, null, []);
         return null;
       }
-      const windows = await listWindows();
+      const [windows, active] = await Promise.all([
+        listWindows(),
+        axHelper.frontmost().catch(() => null),
+      ]);
       const own = ownWindowFilter();
-      const result = appPresence(stepApp, windows, own);
+      // Qhint itself being active (the step card was clicked) says nothing about the app.
+      const activePid = active === process.pid ? null : active;
+      const result = appPresence(stepApp, windows, own, activePid);
       if (DEBUG_TOOLS)
         logPresence(
           stepApp.name,
@@ -288,6 +312,17 @@ function start() {
   });
   panel.onAction((action) => guide.act(action));
 
+  /** Start a guide: check permissions, get out of the way, go. */
+  const startGuide = async (procedure: Guide): Promise<{ ok: boolean; error?: string }> => {
+    if (!session.status().signedIn) return { ok: false, error: 'sign_in_required' };
+    if (!(await ensureScreenPermission())) return { ok: false, error: 'screen_permission' };
+    // Ask once for the permission that lets Qhint follow clicks and see which app is open.
+    if (!hasInputPermission(false)) hasInputPermission(true);
+    mainWindow.window?.hide(); // get out of the way of the app being guided
+    guide.start(procedure);
+    return { ok: true };
+  };
+
   if (DEBUG_TOOLS) {
     ipcMain.handle(
       IPC.runSample,
@@ -295,16 +330,115 @@ function start() {
         if (!fromMainWindow(e)) return null;
         if (typeof id !== 'string' || !(id in SAMPLE_PROCEDURES))
           return { ok: false, error: 'unknown_sample' };
-        if (!session.status().signedIn) return { ok: false, error: 'sign_in_required' };
-        if (!(await ensureScreenPermission())) return { ok: false, error: 'screen_permission' };
-        // Ask once for the permission that lets Qhint follow clicks and see which app is open.
-        if (!hasInputPermission(false)) hasInputPermission(true);
-        mainWindow.window?.hide(); // get out of the way of the app being guided
-        guide.start(SAMPLE_PROCEDURES[id as SampleId]);
-        return { ok: true };
+        return startGuide(SAMPLE_PROCEDURES[id as SampleId]);
       },
     );
   }
+
+  // ---------------------------------------------------------------- guides (main window)
+  const guides = new GuideService({
+    fetch: (url, init) => session.fetch(url, init),
+    dataApiUrl: () => session.dataApiUrl(),
+  });
+  const isId = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
+  /** Run a handler for the main window only; failures come back as a short error code. */
+  const handle = <A extends unknown[], T>(channel: string, fn: (...args: A) => Promise<T>) =>
+    ipcMain.handle(channel, async (e, ...args: unknown[]) => {
+      if (!fromMainWindow(e)) return { ok: false, error: 'forbidden' };
+      try {
+        return { ok: true, value: await fn(...(args as A)) };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message.slice(0, 80) : 'failed' };
+      }
+    });
+
+  handle(IPC.guidesLists, () => guides.lists());
+  handle(IPC.guidesJobs, () => guides.jobs());
+  handle(IPC.guidesGet, async (id: unknown) => {
+    if (!isId(id)) throw new Error('bad_id');
+    return guides.get(id);
+  });
+  handle(IPC.guidesReport, async (id: unknown) => {
+    if (!isId(id)) throw new Error('bad_id');
+    return guides.report(id);
+  });
+  handle(IPC.guidesUpdate, async (id: unknown, edit: unknown) => {
+    if (!isId(id) || typeof edit !== 'object' || !edit) throw new Error('bad_request');
+    // The server validates the whole guide again; this only shapes the request.
+    const { title, steps, variables } = edit as Record<string, unknown>;
+    const r = await guides.update(id, {
+      ...(typeof title === 'string' ? { title } : {}),
+      ...(Array.isArray(steps) ? { steps: steps as Guide['steps'] } : {}),
+      ...(Array.isArray(variables) ? { variables: variables as Guide['variables'] } : {}),
+    });
+    if (!r.ok) throw new Error(r.error);
+    return r.value;
+  });
+  handle(IPC.guidesRemove, async (id: unknown) => {
+    if (!isId(id)) throw new Error('bad_id');
+    if (!(await guides.remove(id))) throw new Error('not_found');
+    return true;
+  });
+  handle(IPC.guidesSubmit, async (id: unknown) => {
+    if (!isId(id)) throw new Error('bad_id');
+    if (!(await guides.submit(id))) throw new Error('not_found');
+    return true;
+  });
+  handle(IPC.guidesPickFile, async () => {
+    const win = mainWindow.window;
+    const options = {
+      title: 'Choose a screen recording or a document',
+      properties: ['openFile' as const],
+      filters: [
+        {
+          name: 'Videos and documents',
+          extensions: [...GUIDE_SOURCES.video, ...GUIDE_SOURCES.doc],
+        },
+        { name: 'Videos', extensions: [...GUIDE_SOURCES.video] },
+        { name: 'Documents', extensions: [...GUIDE_SOURCES.doc] },
+      ],
+    };
+    const r = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
+  handle(IPC.guidesCreate, async (req: unknown) => {
+    const r = req as Partial<CreateGuideRequest> | null;
+    if (
+      !r ||
+      typeof r.path !== 'string' ||
+      !sourceType(r.path) ||
+      typeof r.title !== 'string' ||
+      typeof r.language !== 'string' ||
+      typeof r.outputLanguage !== 'string'
+    )
+      throw new Error('bad_request');
+    const sender = mainWindow.window?.webContents;
+    let last = 0;
+    const result = await guides.create(r as CreateGuideRequest, (p) => {
+      // At most ~10 updates a second.
+      if (Date.now() - last < 100 && p.sentBytes < p.totalBytes) return;
+      last = Date.now();
+      sender?.send(IPC.guidesUploadProgress, p);
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.job;
+  });
+  handle(IPC.guidesRun, async (id: unknown, values: unknown) => {
+    if (!isId(id)) throw new Error('bad_id');
+    const vars =
+      values && typeof values === 'object'
+        ? Object.fromEntries(
+            Object.entries(values as Record<string, unknown>)
+              .filter(([, v]) => typeof v === 'string')
+              .map(([k, v]) => [k, (v as string).slice(0, 500)]),
+          )
+        : {};
+    const r = await startGuide(withVariables(await guides.get(id), vars));
+    if (!r.ok) throw new Error(r.error ?? 'failed');
+    return true;
+  });
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();

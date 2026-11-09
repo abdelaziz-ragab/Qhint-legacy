@@ -4,6 +4,7 @@ import { OVERLAY_SCENE_CHANNEL, type OverlayScene } from '../../shared/overlay-s
 import { localWorkArea, type DisplayGeometry } from '../coords/coords';
 import { currentDisplays } from '../capture/capture';
 import { correctedFrame } from './fit';
+import { canShowToScreenSharing } from '../ax/helper';
 
 /** The page's own view of where it is drawn, in global DIP. */
 async function measureDrawingArea(win: BrowserWindow): Promise<Electron.Rectangle | null> {
@@ -174,7 +175,8 @@ export class OverlayManager {
       },
     });
 
-    win.setContentProtection(true);
+    // Hidden from screen captures unless Qhint's own screenshots can leave it out (macOS).
+    win.setContentProtection(!canShowToScreenSharing());
     win.setIgnoreMouseEvents(true, { forward: true });
     win.setAlwaysOnTop(true, 'screen-saver');
     // skipTransformProcessType keeps the Dock icon; the panel window type is what lets the overlay

@@ -97,6 +97,12 @@ body,
     left 0.6s cubic-bezier(0.22, 1, 0.36, 1),
     top 0.6s cubic-bezier(0.22, 1, 0.36, 1);
 }
+/* Following a moving target: keep up with it. */
+.pointer.arrived {
+  transition:
+    left 0.12s linear,
+    top 0.12s linear;
+}
 
 .ring-type {
   border-color: #3b82f6;

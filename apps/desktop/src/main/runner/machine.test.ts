@@ -348,3 +348,27 @@ describe('live tracking events', () => {
     );
   });
 });
+
+describe('GOTO (checkpoint during live tracking)', () => {
+  it('enters the step the usual way, marking earlier steps done', () => {
+    const p3: Procedure = { ...procedure, steps: [click('a'), click('b'), click('c')] };
+    const { state } = play([{ type: 'START', procedure: p3 }]);
+    const t = reduce(state, { type: 'GOTO', stepIndex: 1 });
+    expect(t.state).toMatchObject({ phase: 'LOCATING', stepIndex: 1, outcomes: ['done'] });
+    expect(t.effects.some((e) => e.type === 'locate')).toBe(true);
+  });
+});
+
+describe('USER_CHOICE (a step that is the user’s own choice)', () => {
+  it('shows the step as text with the hint, and ignores stale tokens', () => {
+    const { state } = play([{ type: 'START', procedure }]);
+    const t = reduce(state, { type: 'USER_CHOICE', token: state.token, hint: 'Pick your file.' });
+    expect(t.state).toMatchObject({
+      phase: 'TEXT_ONLY',
+      notice: { kind: 'no_target', hint: 'Pick your file.' },
+    });
+    expect(reduce(state, { type: 'USER_CHOICE', token: state.token + 5, hint: 'x' }).state).toBe(
+      state,
+    );
+  });
+});

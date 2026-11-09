@@ -219,3 +219,35 @@ describe('matchTarget safety', () => {
     ).toBeNull();
   });
 });
+
+describe('names with extra words (web pages)', () => {
+  const link = (title: string, x = 100) => el({ role: 'AXLink', title, x });
+  const english = step({
+    target: { description: 'English link', text: 'English', role: 'link', neighbors: [] },
+  });
+
+  it('accepts a single control whose name starts with the wanted words', () => {
+    expect(
+      matchTarget(english, [
+        link('English 7,254,000+ articles'),
+        link('Deutsch 3.159.000+ Artikel', 300),
+      ])?.element.title,
+    ).toBe('English 7,254,000+ articles');
+  });
+
+  it('prefers an exact name over a longer one', () => {
+    expect(matchTarget(english, [link('English (simple)', 50), link('English', 400)])?.rect.x).toBe(
+      400,
+    );
+  });
+
+  it('gives up when several names start the same way', () => {
+    expect(matchTarget(english, [link('English articles'), link('English books', 300)])).toBeNull();
+  });
+
+  it('never matches inside a word or on very short names', () => {
+    expect(matchTarget(english, [link('Englishman')])).toBeNull();
+    const ok = step({ target: { description: 'OK', text: 'OK', role: 'link', neighbors: [] } });
+    expect(matchTarget(ok, [link('OK computer')])).toBeNull();
+  });
+});

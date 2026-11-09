@@ -1,3 +1,13 @@
+import type {
+  CreateGuideRequest,
+  Guide,
+  GuideEdit,
+  GuideJob,
+  GuideLists,
+  GuideReport,
+  Result,
+  UploadProgress,
+} from '../shared/guides';
 import type { AppInfo, AuthStatus, ProcedureLists } from '../shared/ipc';
 import type { OverlayScene } from '../shared/overlay-scene';
 import type { PanelAction, PanelView } from '../shared/panel';
@@ -19,6 +29,22 @@ export interface QhintApi {
   procedures(): Promise<ProcedureLists | null>;
   /** Development builds: run a hand-written sample guide. */
   runSample(id: string): Promise<{ ok: boolean; error?: string } | null>;
+  guides: {
+    lists(): Promise<Result<GuideLists>>;
+    jobs(): Promise<Result<GuideJob[]>>;
+    get(id: string): Promise<Result<Guide>>;
+    report(id: string): Promise<Result<GuideReport | null>>;
+    update(id: string, edit: GuideEdit): Promise<Result<Guide>>;
+    remove(id: string): Promise<Result<true>>;
+    submit(id: string): Promise<Result<true>>;
+    /** Opens the system file picker; null when cancelled. */
+    pickFile(): Promise<Result<string | null>>;
+    create(req: CreateGuideRequest): Promise<Result<GuideJob>>;
+    /** Start a guide, filling in its variables (e.g. which file to import). */
+    run(id: string, values: Record<string, string>): Promise<Result<true>>;
+    pathOf(file: File): string;
+    onUploadProgress(listener: (p: UploadProgress) => void): () => void;
+  };
 }
 
 /** Surface exposed to overlay windows as `window.qhintOverlay`. */

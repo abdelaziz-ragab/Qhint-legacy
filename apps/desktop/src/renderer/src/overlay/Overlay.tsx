@@ -117,8 +117,9 @@ function Pointer({ guide }: { guide: OverlayGuide }) {
         </div>
       ) : null}
       <svg
-        className="pointer"
-        style={{ left: pos.x, top: pos.y }}
+        className={`pointer${arrived ? ' arrived' : ''}`}
+        // After the glide it stays on the target, even if the target moves (window dragged).
+        style={arrived ? { left: target.x, top: target.y } : { left: pos.x, top: pos.y }}
         width="28"
         height="28"
         viewBox="0 0 28 28"

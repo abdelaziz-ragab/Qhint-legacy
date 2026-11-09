@@ -478,7 +478,7 @@ describe('API isolation with real sign-ins', () => {
     expect(res.status).toBe(201);
     expect(decodeURIComponent(res.json.upload.url)).toContain(`name=t/${ACME}/doc/`);
     const put = await fetch(res.json.upload.url, {
-      method: 'POST',
+      method: res.json.upload.method,
       headers: res.json.upload.headers,
       body: 'hello world',
     });
